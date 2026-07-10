@@ -76,7 +76,7 @@ describe('resolveShot', () => {
     expect(result.doubleDamageConsumed).toBe(true);
   });
 
-  test('dano dobrado ativo em bala vazia: não é consumido (não houve dano de verdade)', () => {
+  test('dano dobrado ativo em bala vazia: É consumido mesmo sem dano real (qualquer tiro consome)', () => {
     const chamber = makeChamber(['vazia']);
     const result = resolveShot({
       chamber,
@@ -86,7 +86,7 @@ describe('resolveShot', () => {
       doubleDamageActive: true,
     });
 
-    expect(result.doubleDamageConsumed).toBe(false);
+    expect(result.doubleDamageConsumed).toBe(true);
   });
 
   test('consome a bala do TOPO da sequência (ordem importa)', () => {

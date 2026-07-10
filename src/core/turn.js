@@ -22,6 +22,9 @@ function createGameState(config, playerIds, whoStartsRule = 'random') {
   if (playerIds.length !== 2) {
     throw new Error('createGameState: precisa de exatamente 2 jogadores');
   }
+  if (playerIds[0] === playerIds[1]) {
+    throw new Error('createGameState: os dois jogadores não podem ter o mesmo id — isso corrompe o estado (inventário e vida compartilhados)');
+  }
 
   const turnOrder =
     whoStartsRule === 'random' && Math.random() < 0.5
@@ -175,6 +178,9 @@ function handleUseItem(state, action) {
       break;
     }
     case ITEM_TYPES.TRAVAR_ADVERSARIO: {
+      if (state.players[opponentId].skipNextTurn) {
+        throw new Error('handleUseItem: oponente já está travado, item não pode ser usado até o efeito ser consumido');
+      }
       travarAdversario();
       state.players[opponentId].skipNextTurn = true;
       break;

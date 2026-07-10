@@ -203,3 +203,55 @@ describe('partida completa: informação privada nunca vaza pro adversário', ()
     p2.disconnect();
   }, 20000);
 });
+
+describe('BUGS reportados: reconexão por nome e nomes duplicados', () => {
+  test('reconectar com o mesmo nome volta pra partida em andamento, não cria nova', async () => {
+    const p1 = await connectClient();
+    const p2 = await connectClient();
+
+    p1.emit('find_match', { playerId: 'alice4' });
+    await waitFor(p1, 'waiting_for_opponent');
+    p2.emit('find_match', { playerId: 'bob4' });
+
+    const [foundP1] = await Promise.all([waitFor(p1, 'match_found'), waitFor(p2, 'match_found')]);
+    const originalMatchId = foundP1.matchId;
+
+    // simula "recarregar a página": desconecta e abre um socket novo com o mesmo nome
+    p1.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const p1Reconnected = await connectClient();
+    p1Reconnected.emit('find_match', { playerId: 'alice4' });
+
+    const rejoined = await waitFor(p1Reconnected, 'rejoined');
+    expect(rejoined.matchId).toBe(originalMatchId);
+    expect(rejoined.yourPlayerId).toBe('alice4');
+
+    p1Reconnected.disconnect();
+    p2.disconnect();
+  });
+
+  test('dois jogadores com o mesmo nome na fila ao mesmo tempo: o segundo recebe erro, não parea consigo mesmo', async () => {
+    const p1 = await connectClient();
+    const p2 = await connectClient();
+
+    p1.emit('find_match', { playerId: 'duplicado' });
+    await waitFor(p1, 'waiting_for_opponent');
+
+    p2.emit('find_match', { playerId: 'duplicado' });
+    const errorMsg = await waitFor(p2, 'error_msg');
+
+    expect(errorMsg).toMatch(/já está esperando/);
+
+    p1.disconnect();
+    p2.disconnect();
+  });
+});
+
+describe('defesa em profundidade: core rejeita playerIds duplicados mesmo via gameManager', () => {
+  test('createMatch com playerIds duplicados propaga o erro do core', () => {
+    expect(() =>
+      gameManager.createMatch({ maxLives: 6, itemsPerReload: 4, mode: 'pvp' }, ['x', 'x'])
+    ).toThrow();
+  });
+});

@@ -80,6 +80,32 @@ function findBySocketId(socketId) {
   return null;
 }
 
+/**
+ * Procura uma partida NÃO finalizada em que esse playerId já participa.
+ * Base da reconexão automática por nome: se "alice" tentar entrar de
+ * novo na fila e já estiver numa partida em andamento, tratamos como
+ * reconexão, não como nova partida.
+ */
+function findActiveMatchByPlayerId(playerId) {
+  for (const [matchId, match] of matches.entries()) {
+    if (match.state.gameOver) continue;
+    if (playerId in match.sockets) {
+      return { matchId, match };
+    }
+  }
+  return null;
+}
+
+/**
+ * Verifica se um playerId já está "em uso" em alguma partida ativa —
+ * usado pra impedir dois jogadores diferentes escolherem o mesmo nome
+ * ao mesmo tempo (não há autenticação real ainda, então o nome É a
+ * identidade; permitir duplicata corrompe o estado da partida).
+ */
+function isPlayerIdActiveElsewhere(playerId) {
+  return findActiveMatchByPlayerId(playerId) !== null;
+}
+
 module.exports = {
   createMatch,
   getMatch,
@@ -87,5 +113,7 @@ module.exports = {
   setSocket,
   clearTimersOf,
   findBySocketId,
+  findActiveMatchByPlayerId,
+  isPlayerIdActiveElsewhere,
   _debugAllMatches: matches, // só pra testes
 };

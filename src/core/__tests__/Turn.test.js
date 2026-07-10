@@ -35,6 +35,10 @@ describe('createGameState', () => {
     expect(() => createGameState(CONFIG_PVP, ['p1', 'p2', 'p3'])).toThrow();
   });
 
+  test('BUG reportado: lança erro se os dois jogadores tiverem o mesmo id', () => {
+    expect(() => createGameState(CONFIG_PVP, ['alice', 'alice'])).toThrow();
+  });
+
   test('ordem de turno é sorteada (estatisticamente, ambos aparecem primeiro)', () => {
     let p1First = 0;
     for (let i = 0; i < 200; i++) {
@@ -160,6 +164,50 @@ describe('regra: item Dano dobrado', () => {
 
     expect(state.players[opponentId].life).toBe(4); // 6 - 2
     expect(state.doubleDamageActive[p1]).toBe(false); // consumido
+  });
+
+  test('BUG reportado: é consumido mesmo se o tiro sair vazio (não só em bala real)', () => {
+    const state = createGameState(CONFIG_PVP, ['p1', 'p2']);
+    const p1 = currentPlayerId(state);
+    const opponentId = state.turnOrder.find((id) => id !== p1);
+    giveItem(state, p1, ITEM_TYPES.DANO_DOBRADO);
+    // primeiro tiro sai vazio (em si mesmo -> continua o turno), segundo é real no oponente
+    forceChamber(state, ['vazia', 'real']);
+
+    applyAction(state, { type: ACTION_USE_ITEM, playerId: p1, itemType: ITEM_TYPES.DANO_DOBRADO });
+    applyAction(state, { type: ACTION_SHOOT, playerId: p1, target: TARGET_SELF }); // vazia -> turno novo
+
+    // o efeito já deveria estar consumido aqui, mesmo sem dano real ter acontecido
+    expect(state.doubleDamageActive[p1]).toBe(false);
+
+    // segundo disparo do mesmo jogador (turno novo) NÃO deve mais estar dobrado
+    applyAction(state, { type: ACTION_SHOOT, playerId: p1, target: TARGET_OPPONENT });
+    expect(state.players[opponentId].life).toBe(5); // 6 - 1, não 6 - 2
+  });
+});
+
+describe('regra: Travar adversário não pode ser reaplicado enquanto já ativo', () => {
+  test('BUG reportado: usar o item com o oponente já travado lança erro e NÃO consome o item', () => {
+    const state = createGameState(CONFIG_PVP, ['p1', 'p2']);
+    const p1 = currentPlayerId(state);
+    const opponentId = state.turnOrder.find((id) => id !== p1);
+
+    // zera o inventário sorteado aleatoriamente no início, pra controlar
+    // exatamente o que o jogador tem nesse teste.
+    state.players[p1].inventory = [];
+    giveItem(state, p1, ITEM_TYPES.TRAVAR_ADVERSARIO);
+    giveItem(state, p1, ITEM_TYPES.TRAVAR_ADVERSARIO); // um segundo, pra tentar de novo
+
+    applyAction(state, { type: ACTION_USE_ITEM, playerId: p1, itemType: ITEM_TYPES.TRAVAR_ADVERSARIO });
+    expect(state.players[opponentId].skipNextTurn).toBe(true);
+    expect(state.players[p1].inventory.length).toBe(1); // consumiu 1
+
+    expect(() =>
+      applyAction(state, { type: ACTION_USE_ITEM, playerId: p1, itemType: ITEM_TYPES.TRAVAR_ADVERSARIO })
+    ).toThrow();
+
+    // item NÃO foi consumido na tentativa que falhou
+    expect(state.players[p1].inventory.length).toBe(1);
   });
 });
 

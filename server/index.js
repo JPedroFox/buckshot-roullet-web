@@ -40,8 +40,11 @@ function createServer() {
 
   function publicStateSnapshot(match) {
     // Snapshot seguro pra mandar pro cliente: NUNCA inclui a sequência
-    // completa do chamber (seção 12) — só a contagem, que já é pública.
+    // completa do chamber (seção 12) — só a contagem, que já é pública
+    // por definição (seção 5: composição é conhecida em contagem por
+    // todos assim que a recarga acontece).
     const { state } = match;
+    const seq = state.chamber.sequencia;
     return {
       players: Object.fromEntries(
         Object.entries(state.players).map(([id, p]) => [
@@ -49,7 +52,9 @@ function createServer() {
           { life: p.life, inventoryCount: p.inventory.length, skipNextTurn: p.skipNextTurn },
         ])
       ),
-      chamberTotal: state.chamber.sequencia.length,
+      chamberTotal: seq.length,
+      chamberReal: seq.filter((b) => b === 'real').length,
+      chamberVazia: seq.filter((b) => b === 'vazia').length,
       currentTurnPlayerId: currentPlayerId(state),
       gameOver: state.gameOver,
       winnerId: state.winnerId,
@@ -59,6 +64,19 @@ function createServer() {
 
   function privateInventory(match, playerId) {
     return match.state.players[playerId].inventory;
+  }
+
+  /**
+   * Manda pra CADA jogador da partida o snapshot atual e completo do
+   * PRÓPRIO inventário, de forma privada. Sem isso, o cliente só sabe
+   * quais itens tinha no match_found e nunca fica sabendo dos itens
+   * novos distribuídos numa recarga (bug reportado: inventário aumenta
+   * mas os itens novos não aparecem pra usar).
+   */
+  function syncInventories(matchId, match) {
+    match.state.turnOrder.forEach((id) => {
+      sendPrivate(match, id, 'inventory_update', { inventory: privateInventory(match, id) });
+    });
   }
 
   function scheduleTurnTimer(matchId, match) {
@@ -86,6 +104,7 @@ function createServer() {
       });
       broadcastPublic(matchId, 'shot_resolved', publicEvent);
       if (privateEvent) sendPrivate(match, playerId, 'item_result', privateEvent);
+      syncInventories(matchId, match);
       afterAction(matchId, match);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -136,9 +155,43 @@ function createServer() {
     });
   }
 
+  function doRejoin(socket, matchId, match, playerId) {
+    gameManager.setSocket(matchId, playerId, socket.id);
+    socket.join(roomName(matchId));
+    timers.clearReconnectTimer(match);
+
+    socket.emit('rejoined', {
+      matchId,
+      yourPlayerId: playerId,
+      inventory: privateInventory(match, playerId),
+      state: publicStateSnapshot(match),
+    });
+    broadcastPublic(matchId, 'opponent_reconnected', { playerId });
+
+    if (currentPlayerId(match.state) === playerId) {
+      // retoma o timer de turno de onde parou (seção 9)
+      timers.resumeTurnTimer(match, () => handleTurnTimeout(matchId));
+    }
+  }
+
   io.on('connection', (socket) => {
     socket.on('find_match', ({ playerId }) => {
       if (!playerId) return socket.emit('error_msg', 'playerId obrigatório');
+
+      // Caso 1: esse nome já está numa partida em andamento -> reconexão,
+      // não matchmaking novo. Resolve o bug de "recarreguei a página e
+      // não voltei pra minha partida".
+      const active = gameManager.findActiveMatchByPlayerId(playerId);
+      if (active) {
+        return doRejoin(socket, active.matchId, active.match, playerId);
+      }
+
+      // Caso 2: alguém já está na fila esperando com o MESMO nome ->
+      // rejeita, não deixa parear "alice" com "alice" (causava estado
+      // corrompido: um único player entry compartilhado por 2 sockets).
+      if (waitingSocket && waitingSocket.playerId === playerId) {
+        return socket.emit('error_msg', `O nome "${playerId}" já está esperando por uma partida. Escolha outro nome.`);
+      }
 
       if (!waitingSocket) {
         waitingSocket = { socket, playerId };
@@ -184,6 +237,7 @@ function createServer() {
         });
         broadcastPublic(matchId, 'item_used', publicEvent);
         if (privateEvent) sendPrivate(match, playerId, 'item_result', privateEvent);
+        syncInventories(matchId, match); // cobre recarga disparada por "Retirar munição"
         broadcastPublic(matchId, 'state_update', publicStateSnapshot(match));
         // use_item não passa o turno nem mexe nos timers (seção 4).
       } catch (err) {
@@ -204,6 +258,7 @@ function createServer() {
         });
         broadcastPublic(matchId, 'shot_resolved', publicEvent);
         if (privateEvent) sendPrivate(match, playerId, 'item_result', privateEvent);
+        syncInventories(matchId, match); // cobre recarga disparada por chamber vazio
         afterAction(matchId, match);
       } catch (err) {
         socket.emit('error_msg', err.message);
@@ -214,24 +269,7 @@ function createServer() {
       const match = gameManager.getMatch(matchId);
       if (!match) return socket.emit('error_msg', 'partida não encontrada');
       if (!(playerId in match.sockets)) return socket.emit('error_msg', 'jogador não pertence a essa partida');
-
-      gameManager.setSocket(matchId, playerId, socket.id);
-      socket.join(roomName(matchId));
-      timers.clearReconnectTimer(match);
-
-      const wasMidTurn = currentPlayerId(match.state) === playerId && match.timers.turnTimerRemainingMs != null;
-      socket.emit('rejoined', {
-        matchId,
-        yourPlayerId: playerId,
-        inventory: privateInventory(match, playerId),
-        state: publicStateSnapshot(match),
-      });
-      broadcastPublic(matchId, 'opponent_reconnected', { playerId });
-
-      if (currentPlayerId(match.state) === playerId) {
-        // retoma o timer de turno de onde parou (seção 9)
-        timers.resumeTurnTimer(match, () => handleTurnTimeout(matchId));
-      }
+      doRejoin(socket, matchId, match, playerId);
     });
 
     socket.on('disconnect', () => {

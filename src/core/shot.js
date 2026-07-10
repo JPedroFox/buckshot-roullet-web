@@ -43,13 +43,15 @@ function resolveShot({ chamber, target, shooterId, opponentId, doubleDamageActiv
   if (bullet === 'vazia') {
     // Bala vazia em si mesmo: joga de novo, turno não termina.
     // Bala vazia no oponente: turno termina, sem dano.
+    // Dano dobrado é consumido em QUALQUER tiro, real ou vazio — "termina
+    // após o tiro" (seção 7) não distingue o resultado da bala.
     return {
       bullet,
       damage: 0,
       damagedPlayerId: null,
       turnEnds: target === TARGET_OPPONENT,
       chamberEmpty,
-      doubleDamageConsumed: false,
+      doubleDamageConsumed: doubleDamageActive,
     };
   }
 
