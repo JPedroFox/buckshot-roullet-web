@@ -1,0 +1,22 @@
+{
+  "name": "buckshot-roulette-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Jogo 3D no navegador inspirado em Buckshot Roulette com modos PvP e PvE.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test src/core/__tests__/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "socket.io": "^4.1.0",
+    "mysql2": "^3.4.0",
+    "babylonjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.19.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
