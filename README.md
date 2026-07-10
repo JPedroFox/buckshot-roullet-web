@@ -20,9 +20,9 @@ adversário antes de morrer.
 | Interface | HTML + CSS |
 | Cliente | JavaScript |
 | Gráficos 3D | Babylon.js |
-| Backend | Node.js + Express |
+| Backend | Node.js + Express (render.com) |
 | Multiplayer | Socket.io |
-| Banco de dados | MySQL |
+| Banco de dados | PostgreSQL |
 
 **Arquitetura:** servidor autoritativo. O cliente só envia ações; todo o
 cálculo da partida (munição, dano, itens, resultado do tiro) acontece no
@@ -205,51 +205,73 @@ uma simplificação intencional, não uma limitação não percebida.
 
 ```
 users
-- id (PK)
-- username (unique)
-- password_hash
-- created_at
-- season_wins, season_losses, season_points   -- resetados a cada 3 meses, só PvP
-- total_wins, total_losses                    -- histórico vitalício (opcional)
+- id                SERIAL / BIGSERIAL (PK)
+- username          VARCHAR(255) UNIQUE NOT NULL
+- password_hash     TEXT NOT NULL
+- created_at        TIMESTAMPTZ DEFAULT now()
+- season_wins       INTEGER DEFAULT 0
+- season_losses     INTEGER DEFAULT 0
+- season_points     NUMERIC(6,1) DEFAULT 0   -- resetados a cada 3
+  meses, só PvP (NUMERIC por causa do -0.5 por derrota, seção 10)
+- total_wins        INTEGER DEFAULT 0        -- histórico vitalício
+  (opcional)
+- total_losses      INTEGER DEFAULT 0
 
 matches
-- id (PK)
-- mode (pvp | pve)
-- phase_reached (nullable, só PvE)
-- status (in_progress | finished | abandoned | cancelled)
-- started_at, ended_at
+- id                SERIAL / BIGSERIAL (PK)
+- mode              matches_mode ENUM (pvp | pve)
+- phase_reached     INTEGER NULL             -- só PvE
+- status            matches_status ENUM (in_progress | finished |
+  abandoned | cancelled)
+- started_at        TIMESTAMPTZ DEFAULT now()
+- ended_at          TIMESTAMPTZ NULL
 
 match_players
-- id (PK)
-- match_id (FK)
-- user_id (FK, nullable — null se for a IA)
-- is_ai (boolean)
-- final_lives
-- result (win | loss | none)   -- 'none' cobre PvE cancelado por timeout
+- id                SERIAL / BIGSERIAL (PK)
+- match_id          BIGINT REFERENCES matches(id)
+- user_id           BIGINT REFERENCES users(id) NULL -- null se for IA
+- is_ai             BOOLEAN DEFAULT false
+- final_lives       INTEGER
+- result            match_result ENUM (win | loss | none)
+  -- 'none' cobre PvE cancelado por timeout
 
 match_player_items
-- id (PK)
-- match_player_id (FK)
-- item_type
-- reload_number
-- used_at (nullable)
+- id                SERIAL / BIGSERIAL (PK)
+- match_player_id   BIGINT REFERENCES match_players(id)
+- item_type         item_type ENUM (ver_municao | retirar_municao |
+  travar_adversario | curar | dano_dobrado)
+- reload_number     INTEGER
+- used_at           TIMESTAMPTZ NULL
 
 match_events
-- id (PK)
-- match_id (FK)
-- match_player_id (FK)
-- event_type (shot_self | shot_opponent | use_item | reload | disconnect | reconnect | phase_change)
-- payload (JSON)
-- turn_number
-- created_at
+- id                SERIAL / BIGSERIAL (PK)
+- match_id          BIGINT REFERENCES matches(id)
+- match_player_id   BIGINT REFERENCES match_players(id)
+- event_type        event_type ENUM (shot_self | shot_opponent |
+  use_item | reload | disconnect | reconnect | phase_change)
+- payload           JSONB
+- turn_number       INTEGER
+- created_at        TIMESTAMPTZ DEFAULT now()
 ```
+**Notas específicas do Postgres:**
+- ENUMs viram tipos nativos (CREATE TYPE ... AS ENUM), não string
+  solta como no MySQL — precisa criar o tipo antes de criar a tabela
+  que o usa.
+- payload passa de JSON pra JSONB: mesma função, mas indexável e
+  consultável com operadores nativos (@>, ->>, etc), útil se algum dia
+  precisar investigar disputa/bug filtrando por conteúdo do evento.
+- TIMESTAMPTZ em vez de TIMESTAMP/DATETIME: guarda timezone, evita
+  ambiguidade se o backend e o banco não estiverem no mesmo fuso
+  (relevante pro timer de turno/reconexão da seção 9).
 
 **Retenção de dados:**
-- `matches` e `match_players` (resultado agregado) **persistem
-  indefinidamente** — alimentam ranking (PvP) e histórico pessoal (PvE).
-- `match_player_items` e `match_events` (log granular) **expiram após 7 dias**
-  da partida terminar — tempo suficiente para investigar bugs ou disputas,
-  sem acumular volume desnecessário no banco.
+- matches e match_players (resultado agregado) PERSISTEM
+  INDEFINIDAMENTE — alimentam ranking (PvP) e histórico pessoal (PvE).
+- match_player_items e match_events (log granular) EXPIRAM APÓS 7 DIAS
+  da partida terminar. Em Postgres isso normalmente vira um job
+  agendado (pg_cron ou cron externo rodando DELETE), já que não existe
+  TTL nativo por linha como em alguns outros bancos — vale decidir
+  isso quando chegar a hora de implementar, não é urgente agora.
 
 ---
 
@@ -285,7 +307,7 @@ Regra central: **informação sigilosa nunca é broadcast para a sala.**
 ## 15. Ordem de desenvolvimento sugerida
 
 1. Lógica do jogo em JavaScript (mecânica core da seção 5-7).
-2. Backend: Node.js + Socket.io + MySQL (schema da seção 11).
+2. Backend: Node.js + Socket.io + PostgreSQL (schema da seção 11).
 3. Árvore de decisão da IA (seção 8).
 4. Integração cliente-servidor, respeitando a arquitetura de eventos
    (seção 12).
