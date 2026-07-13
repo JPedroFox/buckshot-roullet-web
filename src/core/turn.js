@@ -37,6 +37,11 @@ function createGameState(config, playerIds, whoStartsRule = 'random') {
       life: config.maxLives,
       inventory: [],
       skipNextTurn: false,
+      // true enquanto o jogador foi pulado por "travar adversário" mas
+      // ainda não teve um turno DE VERDADE depois disso. Sem isso, o
+      // lock podia ser reaplicado no instante em que era consumido pelo
+      // pulo, antes do oponente sequer jogar -- travando pra sempre.
+      lockCooldown: false,
     };
   });
 
@@ -75,6 +80,12 @@ function opponentIdOf(state, playerId) {
  * (skip_next_turn). Não usar recursão infinita: com só 2 jogadores,
  * o próprio jogador nunca deveria ter skipNextTurn ao chegar sua vez
  * de novo nesse fluxo simples, mas o loop protege mesmo assim.
+ *
+ * Quando um jogador é pulado, ele entra em "lockCooldown": o item não
+ * pode ser reaplicado nele até que ele realmente jogue um turno de
+ * verdade (não pulado) de novo. Sem isso, o lock pode ser consumido
+ * pelo próprio pulo e reaplicado imediatamente, travando o oponente
+ * pra sempre sem ele nunca agir.
  */
 function advanceTurn(state) {
   const total = state.turnOrder.length;
@@ -85,8 +96,11 @@ function advanceTurn(state) {
     const nextId = currentPlayerId(state);
     if (state.players[nextId].skipNextTurn) {
       state.players[nextId].skipNextTurn = false; // consumido, não acumula
+      state.players[nextId].lockCooldown = true; // ainda não teve turno de verdade
       continue; // pula esse jogador, tenta o próximo
     }
+    // turno de verdade pra nextId -- libera o cooldown, se houver
+    state.players[nextId].lockCooldown = false;
     break;
   } while (attempts < total + 1);
 
@@ -106,6 +120,7 @@ function reload(state) {
     state.players[id].inventory.push(...drawn);
     // cancelamento do lock pendente na recarga (regra explícita da seção 7)
     state.players[id].skipNextTurn = false;
+    state.players[id].lockCooldown = false;
   });
 }
 
@@ -178,8 +193,8 @@ function handleUseItem(state, action) {
       break;
     }
     case ITEM_TYPES.TRAVAR_ADVERSARIO: {
-      if (state.players[opponentId].skipNextTurn) {
-        throw new Error('handleUseItem: oponente já está travado, item não pode ser usado até o efeito ser consumido');
+      if (state.players[opponentId].skipNextTurn || state.players[opponentId].lockCooldown) {
+        throw new Error('handleUseItem: oponente já está travado ou ainda não teve um turno de verdade desde o último lock');
       }
       travarAdversario();
       state.players[opponentId].skipNextTurn = true;

@@ -209,6 +209,48 @@ describe('regra: Travar adversário não pode ser reaplicado enquanto já ativo'
     // item NÃO foi consumido na tentativa que falhou
     expect(state.players[p1].inventory.length).toBe(1);
   });
+
+  test('BUG reportado: trava perpétua -- não pode ser reaplicada até o oponente ter um turno de verdade', () => {
+    const state = createGameState(CONFIG_PVP, ['p1', 'p2']);
+    const p1 = currentPlayerId(state);
+    const opponentId = state.turnOrder.find((id) => id !== p1);
+
+    state.players[p1].inventory = [];
+    giveItem(state, p1, ITEM_TYPES.TRAVAR_ADVERSARIO);
+    giveItem(state, p1, ITEM_TYPES.TRAVAR_ADVERSARIO);
+    // sempre vazia no oponente: nunca dá dano, só passa o turno -- isolar
+    // a mecânica de trava sem interferência de dano/vida.
+    forceChamber(state, ['vazia', 'vazia', 'vazia', 'vazia']);
+
+    // trava
+    applyAction(state, { type: ACTION_USE_ITEM, playerId: p1, itemType: ITEM_TYPES.TRAVAR_ADVERSARIO });
+    // eu (p1 atira, termina o turno -- oponente é pulado, volta pra p1)
+    applyAction(state, { type: ACTION_SHOOT, playerId: p1, target: TARGET_OPPONENT });
+
+    expect(currentPlayerId(state)).toBe(p1); // oponente foi pulado, voltou pra p1
+
+    // aqui está o bug reportado: tentar travar de NOVO antes do oponente
+    // ter jogado de verdade
+    expect(() =>
+      applyAction(state, { type: ACTION_USE_ITEM, playerId: p1, itemType: ITEM_TYPES.TRAVAR_ADVERSARIO })
+    ).toThrow();
+
+    // p1 joga de novo (turno normal, sem trava), passa a vez pro oponente de verdade
+    applyAction(state, { type: ACTION_SHOOT, playerId: p1, target: TARGET_OPPONENT });
+    expect(currentPlayerId(state)).toBe(opponentId); // agora É a vez de verdade do oponente
+
+    // oponente joga seu turno de verdade
+    applyAction(state, { type: ACTION_SHOOT, playerId: opponentId, target: TARGET_OPPONENT });
+    expect(currentPlayerId(state)).toBe(p1);
+
+    // SÓ AGORA, depois do oponente ter tido um turno de verdade, p1 pode travar de novo
+    const result = applyAction(state, {
+      type: ACTION_USE_ITEM,
+      playerId: p1,
+      itemType: ITEM_TYPES.TRAVAR_ADVERSARIO,
+    });
+    expect(result.publicEvent.itemType).toBe(ITEM_TYPES.TRAVAR_ADVERSARIO);
+  });
 });
 
 describe('regra: Travar adversário', () => {

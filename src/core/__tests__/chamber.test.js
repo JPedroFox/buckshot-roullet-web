@@ -64,7 +64,7 @@ describe('generateChamber', () => {
     expect(found).toBe(true);
   });
 
-  test('a proporção de reais extras converge perto de 30% (checagem estatística, não exata)', () => {
+  test('a proporção de reais extras converge perto de 70% (checagem estatística, não exata)', () => {
     // Isola só os casos com total=8 (6 balas extras) pra ter uma amostra
     // grande e consistente de "balas extras".
     let extraReal = 0;
@@ -80,8 +80,8 @@ describe('generateChamber', () => {
     if (extraTotal > 0) {
       const ratio = extraReal / extraTotal;
       // margem generosa pra evitar teste flaky, só detecta desvio grosseiro
-      expect(ratio).toBeGreaterThan(0.15);
-      expect(ratio).toBeLessThan(0.45);
+      expect(ratio).toBeGreaterThan(0.55);
+      expect(ratio).toBeLessThan(0.85);
     }
   });
 });

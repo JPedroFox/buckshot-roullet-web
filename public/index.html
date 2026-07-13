@@ -86,7 +86,8 @@
     </div>
   </div>
 
-  <p>Pente: <span id="chamberCount"></span> balas restantes (<span id="chamberBreakdown"></span>) | Recarga #<span id="reloadCount"></span></p>
+  <p>Recarga #<span id="reloadCount"></span></p>
+  <p id="chamberBreakdown" style="min-height: 1.2em; color:#ffcc55;"></p>
   <p id="turnIndicator" style="font-weight:bold"></p>
 
   <div id="myItems"></div>
@@ -150,10 +151,26 @@ socket.on('match_found', (data) => {
   log(`Partida encontrada! matchId=${matchId}`, 'log-system');
 });
 
+socket.on('rejoined', (data) => {
+  // Handler que faltava: o servidor já mandava esse evento, mas o client
+  // nunca reagia a ele -- por isso o log mostrava "reconectado" mas a
+  // tela ficava presa em "Procurando oponente...".
+  matchId = data.matchId;
+  myPlayerId = data.yourPlayerId;
+  myInventory = data.inventory;
+  document.getElementById('connectBox').style.display = 'none';
+  document.getElementById('gameBox').style.display = 'block';
+  log(`Reconectado à partida ${matchId} como ${myPlayerId}`, 'log-system');
+  // reseta o contador de recarga pra não disparar a animação de recarga
+  // à toa só por causa do primeiro snapshot recebido após reconectar.
+  lastReloadCount = data.state.reloadCount;
+  applyStateUpdate(data.state);
+});
+
 let lastReloadCount = null;
 let reloadAnimTimeout = null;
 
-socket.on('state_update', (state) => {
+function applyStateUpdate(state) {
   const previousReloadCount = lastReloadCount;
   lastReloadCount = state.reloadCount;
   lastState = state;
@@ -163,15 +180,19 @@ socket.on('state_update', (state) => {
   renderPlayer('playerA', myPlayerId, state);
   renderPlayer('playerB', opponentId, state);
 
-  document.getElementById('chamberCount').textContent = state.chamberTotal;
   document.getElementById('reloadCount').textContent = state.reloadCount;
 
-  const justReloaded = previousReloadCount !== null && state.reloadCount !== previousReloadCount;
+  // Mostra o preview na PRIMEIRA rodada também (previousReloadCount ainda
+  // null), não só quando o reloadCount muda numa recarga -- antes só
+  // funcionava a partir da segunda recarga.
+  const isFirstSnapshot = previousReloadCount === null;
+  const justReloaded = isFirstSnapshot || state.reloadCount !== previousReloadCount;
   if (justReloaded) {
-    playReloadAnimation(state.chamberReal, state.chamberVazia);
-  } else {
-    renderChamberBreakdown(state.chamberReal, state.chamberVazia);
+    showChamberPreview(state.chamberReal, state.chamberVazia);
   }
+  // fora da janela de preview de 5s, NENHUMA informação sobre o pente
+  // fica visível de forma persistente -- nem contagem total, nem
+  // real/vazia.
 
   const isMyTurn = state.currentTurnPlayerId === myPlayerId;
   document.getElementById('turnIndicator').textContent = isMyTurn
@@ -182,36 +203,38 @@ socket.on('state_update', (state) => {
   document.getElementById('shootOpponentBtn').disabled = !isMyTurn || state.gameOver;
 
   renderMyItems(isMyTurn && !state.gameOver);
-});
-
-function renderChamberBreakdown(real, vazia) {
-  document.getElementById('chamberBreakdown').textContent = `${real} real, ${vazia} vazia`;
 }
 
-/**
- * Animação puramente cosmética: a composição real/vazia JÁ é pública
- * assim que a recarga acontece (seção 5), então não há nada a esconder
- * de verdade -- isso só simula suspense visual por ~3s antes de
- * revelar os números definitivos.
- */
-function playReloadAnimation(finalReal, finalVazia) {
-  if (reloadAnimTimeout) clearTimeout(reloadAnimTimeout);
-  const total = finalReal + finalVazia;
-  const el = document.getElementById('chamberBreakdown');
-  const start = Date.now();
-  const DURATION = 3000;
+socket.on('state_update', applyStateUpdate);
 
-  function tick() {
-    const elapsed = Date.now() - start;
-    if (elapsed >= DURATION) {
-      renderChamberBreakdown(finalReal, finalVazia);
-      return;
-    }
-    const fake = Array.from({ length: total }, () => (Math.random() < 0.5 ? 'X' : 'O')).join('');
-    el.textContent = `recarregando... ${fake}`;
-    reloadAnimTimeout = setTimeout(tick, 120);
+/**
+ * Preview ESTÁTICO (não animado) da composição do pente, por 5 segundos,
+ * depois some por completo. Não é mais uma animação de embaralhamento --
+ * mostra a composição real de uma vez, mas é temporário: passados os 5s,
+ * a informação de real/vazia deixa de ser visível de qualquer forma.
+ */
+function showChamberPreview(real, vazia) {
+  if (reloadAnimTimeout) clearTimeout(reloadAnimTimeout);
+  const el = document.getElementById('chamberBreakdown');
+
+  const icons = shuffleArray([
+    ...Array(real).fill('🔴'),
+    ...Array(vazia).fill('⚪'),
+  ]);
+  el.textContent = icons.join(' ');
+
+  reloadAnimTimeout = setTimeout(() => {
+    el.textContent = '';
+  }, 5000);
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
   }
-  tick();
+  return a;
 }
 
 function renderPlayer(domPrefix, playerId, state) {
@@ -290,6 +313,13 @@ socket.on('opponent_reconnected', (evt) => {
 });
 socket.on('error_msg', (msg) => {
   log(`ERRO: ${msg}`, 'log-error');
+  // Bug reportado: se o erro acontece ANTES de entrar numa partida (ex:
+  // nome duplicado), a tela ficava presa em "Procurando oponente..." e
+  // sem jeito de tentar de novo. Reabilita o formulário nesse caso.
+  if (!matchId) {
+    document.getElementById('connectStatus').textContent = 'Erro: ' + msg + ' Tente outro nome.';
+    document.getElementById('findMatchBtn').disabled = false;
+  }
 });
 </script>
 </body>

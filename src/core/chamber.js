@@ -2,7 +2,11 @@
 
 const MIN_BULLETS = 2;
 const MAX_BULLETS = 8;
-const EXTRA_REAL_CHANCE = 0.3; // 30% real / 70% vazia, aplicado só às balas "extras"
+// MUDANÇA DE REGRA (pedido explícito, invertendo a seção 5 original):
+// 70% real / 30% vazia nas balas "extras", pra acelerar o ritmo do jogo.
+// O documento de design ainda diz 30/70 -- precisa ser atualizado lá
+// também, esse número aqui sozinho não é a fonte da verdade do design.
+const EXTRA_REAL_CHANCE = 0.7;
 
 /**
  * Sorteia um inteiro entre min e max, inclusive.
@@ -26,7 +30,7 @@ function shuffle(array) {
  * Gera um novo pente completo, seguindo a seção 5 do design:
  * - total de balas: aleatório entre 2 e 8
  * - garantia mínima: 1 real e 1 vazia
- * - balas restantes: 30% real / 70% vazia, sorteadas uma única vez
+ * - balas restantes: 70% real / 30% vazia, sorteadas uma única vez
  *   (não é recalculado bala a bala durante o disparo)
  *
  * @returns {{ total: number, real: number, vazia: number, sequencia: Array<'real'|'vazia'> }}
