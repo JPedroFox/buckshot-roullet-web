@@ -12,11 +12,27 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-troque-em-producao';
 const JWT_EXPIRES_IN = '7d';
 const SALT_ROUNDS = 10;
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+const MIN_PASSWORD_TYPES = 2;
 
 class AuthError extends Error {}
 
 function normalizeUsername(username) {
   return String(username || '').trim().toLowerCase();
+}
+
+/**
+ * Conta quantos tipos de caractere aparecem na senha: minúscula,
+ * maiúscula, número, símbolo. Espelha a mesma regra usada no
+ * checklist/barra de força do register.html -- se um lado mudar, o
+ * outro tem que mudar junto ou a UI mente sobre o que o servidor aceita.
+ */
+function countPasswordTypes(password) {
+  let types = 0;
+  if (/[a-z]/.test(password)) types++;
+  if (/[A-Z]/.test(password)) types++;
+  if (/[0-9]/.test(password)) types++;
+  if (/[^a-zA-Z0-9]/.test(password)) types++;
+  return types;
 }
 
 function signToken(user) {
@@ -42,6 +58,9 @@ async function registerUser(username, password) {
   }
   if (password.length < 6) {
     throw new AuthError('senha precisa ter pelo menos 6 caracteres');
+  }
+  if (countPasswordTypes(password) < MIN_PASSWORD_TYPES) {
+    throw new AuthError('senha muito fraca: combine pelo menos 2 tipos de caractere (minúsculas, maiúsculas, números, símbolos)');
   }
 
   const existing = await pool.query('SELECT id FROM users WHERE username = $1', [normalized]);
@@ -90,5 +109,6 @@ module.exports = {
   loginUser,
   verifyToken,
   normalizeUsername,
+  countPasswordTypes,
   AuthError,
 };

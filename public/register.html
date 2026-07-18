@@ -4,16 +4,30 @@
 <meta charset="UTF-8">
 <title>Buckshot Roulette Web - Cadastrar</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 </head>
-<body>
+<body class="auth-page">
 
-<h1>Buckshot Roulette Web</h1>
+<h1><i class="bi bi-crosshair2"></i> Buckshot Roulette Web</h1>
 
-<div class="box" id="registerBox">
+<div class="box auth-box" id="registerBox">
   <strong>Cadastrar</strong>
-  <input id="registerUsername" placeholder="username (3-20 caracteres, letras/números/_)" autocomplete="username" />
-  <input id="registerPassword" type="password" placeholder="senha (mín. 6 caracteres)" autocomplete="new-password" />
-  <button id="registerBtn">Cadastrar</button>
+  <input id="registerUsername" placeholder="username" autocomplete="username" />
+  <input id="registerPassword" type="password" placeholder="senha" autocomplete="new-password" />
+
+  <div class="pw-strength-track"><div class="pw-strength-fill" id="pwStrengthFill"></div></div>
+  <div class="pw-strength-label" id="pwStrengthLabel">&nbsp;</div>
+
+  <input id="registerPasswordConfirm" type="password" placeholder="confirmar senha" autocomplete="new-password" />
+
+  <div class="pw-rules">
+    <div class="pw-rule" id="ruleUsername"><i class="bi bi-circle pw-rule-icon"></i> Username: 3-20 caracteres (letras/números/_)</div>
+    <div class="pw-rule" id="ruleLength"><i class="bi bi-circle pw-rule-icon"></i> Mínimo 6 caracteres</div>
+    <div class="pw-rule" id="ruleVariety"><i class="bi bi-circle pw-rule-icon"></i> Ao menos 2 tipos: minúsculas, maiúsculas, números, símbolos</div>
+    <div class="pw-rule" id="ruleMatch"><i class="bi bi-circle pw-rule-icon"></i> Senhas coincidem</div>
+  </div>
+
+  <button id="registerBtn"><i class="bi bi-person-plus-fill"></i> Cadastrar</button>
   <div class="error-text" id="registerError"></div>
   <a class="toggle-link" href="/index.html">Já tem conta? Entrar</a>
 </div>
@@ -22,11 +36,86 @@
 <script>
 redirectIfAlreadyLoggedIn();
 
+const usernameEl = document.getElementById('registerUsername');
+const passwordEl = document.getElementById('registerPassword');
+const confirmEl = document.getElementById('registerPasswordConfirm');
+const ruleUsernameEl = document.getElementById('ruleUsername');
+const ruleLengthEl = document.getElementById('ruleLength');
+const ruleVarietyEl = document.getElementById('ruleVariety');
+const ruleMatchEl = document.getElementById('ruleMatch');
+const strengthFillEl = document.getElementById('pwStrengthFill');
+const strengthLabelEl = document.getElementById('pwStrengthLabel');
+
+function setRuleState(el, met) {
+  el.classList.toggle('met', met);
+  el.querySelector('.pw-rule-icon').className = met
+    ? 'bi bi-check-circle-fill pw-rule-icon'
+    : 'bi bi-circle pw-rule-icon';
+}
+
+/**
+ * Classificação real (não é só cosmética): conta quantos tipos de
+ * caractere aparecem (minúscula/maiúscula/número/símbolo comum).
+ * Fraca = length < 6 OU só 1 tipo de caractere -> bloqueia o cadastro.
+ * Média/Boa/Ótima = 2/3/4 tipos com length >= 6 -> liberado.
+ */
+function classifyPassword(pw) {
+  if (!pw) return { level: 0, label: '\u00a0', cls: '', ok: false };
+  if (pw.length < 6) return { level: 1, label: 'Fraca', cls: 'weak', ok: false };
+
+  let types = 0;
+  if (/[a-z]/.test(pw)) types++;
+  if (/[A-Z]/.test(pw)) types++;
+  if (/[0-9]/.test(pw)) types++;
+  if (/[^a-zA-Z0-9]/.test(pw)) types++;
+
+  if (types <= 1) return { level: 1, label: 'Fraca', cls: 'weak', ok: false };
+  if (types === 2) return { level: 2, label: 'Média', cls: 'fair', ok: true };
+  if (types === 3) return { level: 3, label: 'Boa', cls: 'good', ok: true };
+  return { level: 4, label: 'Ótima', cls: 'strong', ok: true };
+}
+
+function updateChecks() {
+  const username = usernameEl.value.trim();
+  const password = passwordEl.value;
+  const confirm = confirmEl.value;
+  const classification = classifyPassword(password);
+
+  setRuleState(ruleUsernameEl, /^[a-zA-Z0-9_]{3,20}$/.test(username));
+  setRuleState(ruleLengthEl, password.length >= 6);
+  setRuleState(ruleVarietyEl, classification.ok);
+  setRuleState(ruleMatchEl, confirm.length > 0 && password === confirm);
+
+  strengthFillEl.style.width = (classification.level * 25) + '%';
+  strengthFillEl.className = 'pw-strength-fill' + (classification.cls ? ' ' + classification.cls : '');
+  strengthLabelEl.textContent = classification.label;
+
+  return classification;
+}
+
+usernameEl.addEventListener('input', updateChecks);
+passwordEl.addEventListener('input', updateChecks);
+confirmEl.addEventListener('input', updateChecks);
+updateChecks();
+
 document.getElementById('registerBtn').addEventListener('click', async () => {
-  const username = document.getElementById('registerUsername').value.trim();
-  const password = document.getElementById('registerPassword').value;
+  const username = usernameEl.value.trim();
+  const password = passwordEl.value;
+  const confirm = confirmEl.value;
   const errEl = document.getElementById('registerError');
   errEl.textContent = '';
+
+  const classification = classifyPassword(password);
+  if (!classification.ok) {
+    errEl.textContent = 'Senha muito fraca. Combine pelo menos 2 tipos: minúsculas, maiúsculas, números ou símbolos, com 6+ caracteres.';
+    return;
+  }
+
+  if (password !== confirm) {
+    errEl.textContent = 'As senhas não coincidem.';
+    return;
+  }
+
   try {
     const { token, user } = await callAuthEndpoint('/auth/register', username, password);
     setSession(token, user.username);
@@ -36,7 +125,7 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('registerPassword').addEventListener('keydown', (e) => {
+confirmEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('registerBtn').click();
 });
 </script>

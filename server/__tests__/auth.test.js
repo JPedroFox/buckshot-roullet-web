@@ -51,7 +51,7 @@ describe('POST /auth/register', () => {
 
   test('rejeita username duplicado (case-insensitive)', async () => {
     await request(app).post('/auth/register').send({ username: 'bob', password: 'senha123' });
-    const res = await request(app).post('/auth/register').send({ username: 'BOB', password: 'outrasenha' });
+    const res = await request(app).post('/auth/register').send({ username: 'BOB', password: 'outrasenha1' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/já está em uso/);
@@ -60,6 +60,17 @@ describe('POST /auth/register', () => {
   test('rejeita senha curta', async () => {
     const res = await request(app).post('/auth/register').send({ username: 'carol', password: '123' });
     expect(res.status).toBe(400);
+  });
+
+  test('rejeita senha com 6+ caracteres mas só 1 tipo de caractere (fraca)', async () => {
+    const res = await request(app).post('/auth/register').send({ username: 'heidi', password: 'aaaaaaaa' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/fraca/);
+  });
+
+  test('aceita senha com exatamente 2 tipos de caractere (mínimo aceitável)', async () => {
+    const res = await request(app).post('/auth/register').send({ username: 'ivan', password: 'senha1234' });
+    expect(res.status).toBe(201);
   });
 
   test('rejeita username com caracteres inválidos', async () => {
@@ -83,17 +94,17 @@ describe('POST /auth/register', () => {
 
 describe('POST /auth/login', () => {
   beforeEach(async () => {
-    await request(app).post('/auth/register').send({ username: 'frank', password: 'senhacerta' });
+    await request(app).post('/auth/register').send({ username: 'frank', password: 'senhacerta1' });
   });
 
   test('login com credenciais corretas retorna token', async () => {
-    const res = await request(app).post('/auth/login').send({ username: 'frank', password: 'senhacerta' });
+    const res = await request(app).post('/auth/login').send({ username: 'frank', password: 'senhacerta1' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
   });
 
   test('login funciona com case diferente no username', async () => {
-    const res = await request(app).post('/auth/login').send({ username: 'FRANK', password: 'senhacerta' });
+    const res = await request(app).post('/auth/login').send({ username: 'FRANK', password: 'senhacerta1' });
     expect(res.status).toBe(200);
   });
 
