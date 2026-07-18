@@ -12,27 +12,54 @@
 <div class="box">
   <div>Logado como <strong id="usernameDisplay"></strong></div>
   <button id="playBtn">🎮 Jogar PvP</button>
+  <button id="leaderboardBtn">🏆 Ver ranking</button>
   <button id="logoutBtn">Sair</button>
 </div>
 
 <div class="box">
-  <strong>Estatísticas</strong>
-  <p style="color:#888; font-size:13px;">
-    Ainda não implementado — as partidas ainda não são salvas no banco
-    (seção 11 do design, tabelas <code>matches</code>/<code>match_players</code>),
-    então não há histórico real pra mostrar aqui. Isso é próximo passo
-    planejado, não um bug.
-  </p>
+  <strong>Estatísticas (PvP)</strong>
+  <div id="statsContent" style="font-size:14px; margin-top:6px;">carregando...</div>
+  <div id="qualificationBadge" style="margin-top:8px; font-weight:bold;"></div>
 </div>
 
 <script src="/shared.js"></script>
 <script>
 if (requireAuth()) {
   document.getElementById('usernameDisplay').textContent = getUsername();
+  loadStats();
+}
+
+async function loadStats() {
+  const statsEl = document.getElementById('statsContent');
+  const badgeEl = document.getElementById('qualificationBadge');
+  try {
+    const { user } = await fetchAuthed('/auth/me');
+    statsEl.innerHTML = `
+      Vitórias (temporada): <strong>${user.seasonWins}</strong><br>
+      Derrotas (temporada): <strong>${user.seasonLosses}</strong><br>
+      Pontos (temporada): <strong>${user.seasonPoints}</strong><br>
+      Partidas PvP na temporada: <strong>${user.seasonGamesPlayed}</strong><br>
+      Vitórias (total histórico): <strong>${user.totalWins}</strong><br>
+      Derrotas (total histórico): <strong>${user.totalLosses}</strong>
+    `;
+    if (user.qualified) {
+      badgeEl.textContent = '✅ Classificado no ranking oficial';
+      badgeEl.style.color = '#55ff55';
+    } else {
+      badgeEl.textContent = `⏳ Não classificado -- faltam ${user.gamesUntilQualified} partida(s) PvP (mínimo 10 na temporada)`;
+      badgeEl.style.color = '#ffcc55';
+    }
+  } catch (err) {
+    statsEl.textContent = 'Não foi possível carregar as estatísticas: ' + err.message;
+  }
 }
 
 document.getElementById('playBtn').addEventListener('click', () => {
   window.location.href = '/game.html';
+});
+
+document.getElementById('leaderboardBtn').addEventListener('click', () => {
+  window.location.href = '/leaderboard.html';
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {

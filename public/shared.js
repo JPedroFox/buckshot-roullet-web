@@ -53,3 +53,16 @@ async function callAuthEndpoint(path, username, password) {
   if (!res.ok) throw new Error(data.error || 'erro desconhecido');
   return data;
 }
+
+/**
+ * GET autenticado via header Authorization: Bearer <token>.
+ * Usado pra endpoints protegidos como /auth/me.
+ */
+async function fetchAuthed(path) {
+  const res = await fetch(path, {
+    headers: { Authorization: 'Bearer ' + getToken() },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'erro desconhecido');
+  return data;
+}

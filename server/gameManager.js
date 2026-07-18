@@ -24,18 +24,35 @@ function createMatch(config, playerIds, whoStartsRule = 'random') {
   const state = createGameState(config, playerIds, whoStartsRule);
 
   const sockets = {};
+  const userIds = {}; // playerId (username) -> userId (bigint da tabela users)
   playerIds.forEach((id) => {
     sockets[id] = null;
+    userIds[id] = null;
   });
 
   matches.set(matchId, {
     state,
     config,
     sockets,
+    userIds,
+    persisted: false, // guarda contra salvar o resultado 2x
     timers: { turnTimer: null, reconnectTimer: null },
   });
 
   return matchId;
+}
+
+/**
+ * Associa o userId (id numérico da tabela users) a um playerId dentro
+ * da partida -- necessário pra persistir o resultado depois, já que
+ * match_players.user_id referencia users(id), não o username.
+ */
+function setUserId(matchId, playerId, userId) {
+  const match = matches.get(matchId);
+  if (!match) return false;
+  if (!(playerId in match.userIds)) return false;
+  match.userIds[playerId] = userId;
+  return true;
 }
 
 function getMatch(matchId) {
@@ -111,6 +128,7 @@ module.exports = {
   getMatch,
   removeMatch,
   setSocket,
+  setUserId,
   clearTimersOf,
   findBySocketId,
   findActiveMatchByPlayerId,

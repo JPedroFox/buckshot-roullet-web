@@ -7,7 +7,9 @@ const { Server } = require('socket.io');
 const gameManager = require('./gameManager');
 const timers = require('./timers');
 const authRoutes = require('./authRoutes');
+const rankingRoutes = require('./rankingRoutes');
 const { verifyToken } = require('./auth');
+const { saveMatchResult } = require('./matchRepository');
 const { applyAction, currentPlayerId, ACTION_USE_ITEM, ACTION_SHOOT } = require('../src/core/turn');
 
 const PVP_CONFIG = { maxLives: 6, itemsPerReload: 4, mode: 'pvp' };
@@ -19,6 +21,7 @@ function createServer() {
 
   app.use(express.json());
   app.use('/auth', authRoutes);
+  app.use('/ranking', rankingRoutes);
   app.use(express.static(require('path').join(__dirname, '..', 'public')));
 
   /**
@@ -139,12 +142,37 @@ function createServer() {
     }
   }
 
+  /**
+   * Salva o resultado no banco (seção 11) quando a partida termina.
+   * `match.persisted` é marcado de forma SÍNCRONA antes de qualquer
+   * await, pra evitar salvar duas vezes se essa função for chamada mais
+   * de uma vez (defensivo -- não deveria acontecer no fluxo normal).
+   * Falha ao persistir NÃO derruba o jogo: os jogadores já viram o
+   * resultado via 'match_ended', a falha fica só logada no servidor.
+   */
+  function persistMatchIfNeeded(matchId, match, status) {
+    if (match.persisted) return;
+    match.persisted = true;
+
+    const players = match.state.turnOrder.map((playerId) => ({
+      userId: match.userIds[playerId],
+      finalLives: match.state.players[playerId].life,
+      result: playerId === match.state.winnerId ? 'win' : 'loss',
+    }));
+
+    saveMatchResult({ mode: 'pvp', status, players }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`falha ao persistir resultado da partida ${matchId}:`, err);
+    });
+  }
+
   function afterAction(matchId, match) {
     broadcastPublic(matchId, 'state_update', publicStateSnapshot(match));
 
     if (match.state.gameOver) {
       timers.clearTurnTimer(match);
       timers.clearReconnectTimer(match);
+      persistMatchIfNeeded(matchId, match, 'finished');
       broadcastPublic(matchId, 'match_ended', {
         winnerId: match.state.winnerId,
         reason: 'victory',
@@ -175,6 +203,7 @@ function createServer() {
     match.state.winnerId = winnerId;
     timers.clearTurnTimer(match);
     timers.clearReconnectTimer(match);
+    persistMatchIfNeeded(matchId, match, 'abandoned');
 
     broadcastPublic(matchId, 'match_ended', {
       winnerId,
@@ -223,14 +252,14 @@ function createServer() {
       }
 
       if (!waitingSocket) {
-        waitingSocket = { socket, playerId };
+        waitingSocket = { socket, playerId, userId: socket.data.userId };
         socket.emit('waiting_for_opponent');
         return;
       }
 
       // Emparelha com quem já estava esperando.
       const p1 = waitingSocket;
-      const p2 = { socket, playerId };
+      const p2 = { socket, playerId, userId: socket.data.userId };
       waitingSocket = null;
 
       const matchId = gameManager.createMatch(PVP_CONFIG, [p1.playerId, p2.playerId]);
@@ -238,6 +267,8 @@ function createServer() {
 
       gameManager.setSocket(matchId, p1.playerId, p1.socket.id);
       gameManager.setSocket(matchId, p2.playerId, p2.socket.id);
+      gameManager.setUserId(matchId, p1.playerId, p1.userId);
+      gameManager.setUserId(matchId, p2.playerId, p2.userId);
 
       p1.socket.join(roomName(matchId));
       p2.socket.join(roomName(matchId));

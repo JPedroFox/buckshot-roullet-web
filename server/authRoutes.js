@@ -2,6 +2,8 @@
 
 const express = require('express');
 const { registerUser, loginUser, AuthError } = require('./auth');
+const { requireAuthHeader } = require('./authMiddleware');
+const { getUserStats } = require('./rankingRepository');
 
 const router = express.Router();
 
@@ -31,6 +33,20 @@ router.post('/login', async (req, res) => {
     }
     // eslint-disable-next-line no-console
     console.error('login error:', err);
+    res.status(500).json({ error: 'erro interno' });
+  }
+});
+
+router.get('/me', requireAuthHeader, async (req, res) => {
+  try {
+    const stats = await getUserStats(req.user.sub);
+    if (!stats) {
+      return res.status(404).json({ error: 'usuário não encontrado' });
+    }
+    res.status(200).json({ user: stats });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('me error:', err);
     res.status(500).json({ error: 'erro interno' });
   }
 });

@@ -8,7 +8,11 @@
 <body>
 
 <h1>🔫 Buckshot Roulette Web — PvP</h1>
-<div class="nav-bar"><a href="/profile.html">&larr; Voltar ao perfil</a></div>
+<div class="nav-bar">
+  <a href="/profile.html">
+    <span class="bullet-icon"></span> Voltar ao perfil
+  </a>
+</div>
 
 <div class="box" id="connectBox">
   <div>Logado como <strong id="loggedUsername"></strong></div>
@@ -114,7 +118,7 @@ socket.on('match_found', (data) => {
   myInventory = data.inventory;
   document.getElementById('connectBox').style.display = 'none';
   document.getElementById('gameBox').style.display = 'block';
-  log(`Partida encontrada! matchId=${matchId}`, 'log-system');
+  log(`[BALA] Partida encontrada! matchId=${matchId}`, 'log-system');
 });
 
 socket.on('rejoined', (data) => {
@@ -202,7 +206,7 @@ function applyStateUpdate(state) {
 
   const isMyTurn = state.currentTurnPlayerId === myPlayerId;
   document.getElementById('turnIndicator').textContent = isMyTurn
-    ? '👉 SUA VEZ'
+    ? 'SUA VEZ'
     : `Vez de: ${state.currentTurnPlayerId}`;
 
   document.getElementById('shootSelfBtn').disabled = !isMyTurn || state.gameOver;
@@ -240,7 +244,11 @@ function renderPlayer(domPrefix, playerId, state) {
   document.getElementById(domPrefix).classList.toggle('turn', isTurn);
   document.getElementById(domPrefix + 'Name').textContent =
     (playerId === myPlayerId ? '🧍 Você' : '🎯 Oponente') + ` (${playerId})`;
-  document.getElementById(domPrefix + 'Life').textContent = '❤️'.repeat(Math.max(p.life, 0)) || '💀';
+  if (p.life <= 0) {
+    document.getElementById(domPrefix + 'Life').innerHTML = '<span class="skull-icon"></span>';
+  } else {
+    document.getElementById(domPrefix + 'Life').textContent = '♥'.repeat(Math.max(p.life, 0));
+  }
   document.getElementById(domPrefix + 'Inv').textContent = `Itens no inventário: ${p.inventoryCount}`;
 }
 

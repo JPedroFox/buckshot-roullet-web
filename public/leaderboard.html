@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Buckshot Roulette Web - Ranking</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #333; }
+  th { color: #ff8888; }
+  tr.me { background: #2a3a2a; }
+</style>
+</head>
+<body>
+
+<h1>🏆 Ranking PvP (temporada atual)</h1>
+<div class="nav-bar"><a href="/profile.html">&larr; Voltar ao perfil</a></div>
+
+<div class="box">
+  <p id="seasonInfo" style="color:#888; font-size:12px;"></p>
+  <p style="color:#888; font-size:12px;">
+    Só aparecem aqui usuários com pelo menos 10 partidas PvP jogadas
+    nesta temporada (seção 10 do design). Pontuação: +1 por vitória,
+    -0,5 por derrota.
+  </p>
+  <div id="leaderboardContent">carregando...</div>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+if (requireAuth()) {
+  loadLeaderboard();
+}
+
+async function loadLeaderboard() {
+  const el = document.getElementById('leaderboardContent');
+  const seasonInfoEl = document.getElementById('seasonInfo');
+  const myUsername = getUsername();
+
+  try {
+    const { leaderboard, seasonStartedAt } = await fetchAuthed('/ranking/leaderboard');
+
+    if (seasonStartedAt) {
+      const date = new Date(seasonStartedAt);
+      seasonInfoEl.textContent = `Temporada atual iniciada em: ${date.toLocaleDateString('pt-BR')}`;
+    }
+
+    if (leaderboard.length === 0) {
+      el.textContent = 'Ninguém classificado ainda (ninguém atingiu 10 partidas PvP nessa temporada).';
+      return;
+    }
+
+    const rows = leaderboard.map((entry) => {
+      const isMe = entry.username === myUsername;
+      return `
+        <tr class="${isMe ? 'me' : ''}">
+          <td>#${entry.rank}</td>
+          <td>${entry.username}${isMe ? ' (você)' : ''}</td>
+          <td>${entry.seasonWins}</td>
+          <td>${entry.seasonLosses}</td>
+          <td>${entry.seasonPoints}</td>
+        </tr>
+      `;
+    }).join('');
+
+    el.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>#</th><th>Jogador</th><th>Vitórias</th><th>Derrotas</th><th>Pontos</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (err) {
+    el.textContent = 'Não foi possível carregar o ranking: ' + err.message;
+  }
+}
+</script>
+</body>
+</html>
