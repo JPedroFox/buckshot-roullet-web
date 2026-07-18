@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Buckshot Roulette Web - Cadastrar</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<h1>🔫 Buckshot Roulette Web</h1>
+
+<div class="box" id="registerBox">
+  <strong>Cadastrar</strong>
+  <input id="registerUsername" placeholder="username (3-20 caracteres, letras/números/_)" autocomplete="username" />
+  <input id="registerPassword" type="password" placeholder="senha (mín. 6 caracteres)" autocomplete="new-password" />
+  <button id="registerBtn">Cadastrar</button>
+  <div class="error-text" id="registerError"></div>
+  <a class="toggle-link" href="/index.html">Já tem conta? Entrar</a>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+redirectIfAlreadyLoggedIn();
+
+document.getElementById('registerBtn').addEventListener('click', async () => {
+  const username = document.getElementById('registerUsername').value.trim();
+  const password = document.getElementById('registerPassword').value;
+  const errEl = document.getElementById('registerError');
+  errEl.textContent = '';
+  try {
+    const { token, user } = await callAuthEndpoint('/auth/register', username, password);
+    setSession(token, user.username);
+    window.location.href = '/profile.html';
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
+});
+
+document.getElementById('registerPassword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('registerBtn').click();
+});
+</script>
+</body>
+</html>

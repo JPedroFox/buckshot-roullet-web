@@ -1,0 +1,349 @@
+/* Buckshot Roulette - Dark Game Theme */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #1a0a0a;
+  color: #e0d0c0;
+  font-family: 'Courier New', monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1rem;
+  gap: 1.5rem;
+  background-image:
+    radial-gradient(ellipse at 50% 0%, #2a0f0f 0%, transparent 60%),
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 40, 40, 0.03) 2px, rgba(255, 40, 40, 0.03) 4px);
+}
+
+a {
+  color: #cc4444;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: #ff6666;
+  text-shadow: 0 0 8px rgba(255, 50, 50, 0.5);
+}
+
+h1 {
+  font-size: 1.8rem;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  color: #cc2222;
+  text-shadow:
+    0 0 10px rgba(200, 30, 30, 0.5),
+    0 2px 0 #330000;
+  border-bottom: 2px solid #442222;
+  padding-bottom: 0.5rem;
+  width: 100%;
+  max-width: 600px;
+}
+
+.nav-bar {
+  width: 100%;
+  max-width: 600px;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+/* Box container */
+.box {
+  background: #1e0e0e;
+  border: 2px solid #442222;
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  box-shadow:
+    inset 0 0 20px rgba(0, 0, 0, 0.6),
+    0 0 15px rgba(100, 10, 10, 0.3);
+}
+
+/* Login/Register inputs */
+input {
+  background: #0d0505;
+  border: 1px solid #553333;
+  color: #e0d0c0;
+  padding: 0.7rem 1rem;
+  font-family: 'Courier New', monospace;
+  font-size: 1rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  border-radius: 4px;
+}
+
+input:focus {
+  border-color: #cc4444;
+  box-shadow: 0 0 10px rgba(200, 50, 50, 0.3);
+}
+
+input::placeholder {
+  color: #664444;
+}
+
+/* Buttons */
+button {
+  background: #2a0f0f;
+  border: 2px solid #663333;
+  color: #e0c0c0;
+  font-family: 'Courier New', monospace;
+  font-size: 1rem;
+  padding: 0.7rem 1.2rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  transition: all 0.2s;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+button:hover:not(:disabled) {
+  background: #441a1a;
+  border-color: #cc4444;
+  color: #ffffff;
+  box-shadow: 0 0 15px rgba(200, 30, 30, 0.4);
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0px);
+  box-shadow: 0 0 5px rgba(200, 30, 30, 0.2);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #332222;
+}
+
+.error-text {
+  color: #ff4444;
+  font-size: 0.9rem;
+  text-shadow: 0 0 5px rgba(255, 0, 0, 0.3);
+}
+
+.toggle-link {
+  display: block;
+  text-align: center;
+  margin-top: 0.3rem;
+}
+
+/* Game specific */
+.players {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.player {
+  background: #150808;
+  border: 2px solid #442222;
+  border-radius: 8px;
+  padding: 1rem;
+  min-width: 180px;
+  flex: 1;
+  text-align: center;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.player.turn {
+  border-color: #ff4444;
+  box-shadow:
+    0 0 20px rgba(255, 30, 30, 0.3),
+    inset 0 0 15px rgba(255, 20, 20, 0.1);
+  animation: pulseBorder 1.5s infinite;
+}
+
+@keyframes pulseBorder {
+  0%, 100% { border-color: #ff4444; }
+  50% { border-color: #ff8888; }
+}
+
+.life {
+  font-size: 1.5rem;
+  margin: 0.5rem 0;
+  letter-spacing: 3px;
+}
+
+#playerAName, #playerBName {
+  font-weight: bold;
+  font-size: 1.1rem;
+  color: #ddbbbb;
+}
+
+#playerAInv, #playerBInv {
+  font-size: 0.85rem;
+  color: #aa8888;
+  margin-top: 0.3rem;
+}
+
+/* Turn indicator */
+#turnIndicator {
+  font-size: 1.3rem;
+  color: #ff6666;
+  text-shadow: 0 0 10px rgba(255, 40, 40, 0.5);
+  text-align: center;
+  padding: 0.5rem 0;
+}
+
+#reloadCount {
+  color: #ffaa44;
+  font-weight: bold;
+}
+
+#chamberBreakdown {
+  font-size: 1.4rem;
+  letter-spacing: 6px;
+  text-align: center;
+  padding: 0.3rem 0;
+}
+
+/* My items section */
+#myItems {
+  background: #110606;
+  border: 1px solid #442222;
+  border-radius: 6px;
+  padding: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+#myItems strong {
+  width: 100%;
+  color: #cc8888;
+  margin-bottom: 0.2rem;
+}
+
+#myItems button {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.8rem;
+  background: #1a0808;
+}
+
+/* Action buttons */
+#shootSelfBtn, #shootOpponentBtn {
+  margin: 0.3rem;
+  min-width: 160px;
+}
+
+/* Log */
+#log {
+  background: #0a0303;
+  border: 1px solid #332222;
+  border-radius: 4px;
+  padding: 0.8rem;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #bbaaaa;
+}
+
+#log div {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid #1a0a0a;
+}
+
+#log .log-system {
+  color: #88aacc;
+  font-style: italic;
+}
+
+#log .log-error {
+  color: #ff4444;
+}
+
+#log .log-private {
+  color: #cc88ff;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d0505;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #442222;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #663333;
+}
+
+/* Responsive */
+@media (max-width: 500px) {
+  body {
+    padding: 1rem 0.5rem;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+    letter-spacing: 2px;
+  }
+
+  .box {
+    padding: 1rem;
+  }
+
+  .players {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .player {
+    min-width: unset;
+  }
+
+  button {
+    font-size: 0.9rem;
+    padding: 0.6rem 0.8rem;
+  }
+
+  #shootSelfBtn, #shootOpponentBtn {
+    min-width: 120px;
+    width: 100%;
+  }
+
+  #myItems {
+    flex-direction: column;
+  }
+
+  #myItems button {
+    width: 100%;
+  }
+}
+
+/* Animations */
+.box {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

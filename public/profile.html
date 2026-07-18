@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Buckshot Roulette Web - Perfil</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<h1>🔫 Buckshot Roulette Web</h1>
+
+<div class="box">
+  <div>Logado como <strong id="usernameDisplay"></strong></div>
+  <button id="playBtn">🎮 Jogar PvP</button>
+  <button id="logoutBtn">Sair</button>
+</div>
+
+<div class="box">
+  <strong>Estatísticas</strong>
+  <p style="color:#888; font-size:13px;">
+    Ainda não implementado — as partidas ainda não são salvas no banco
+    (seção 11 do design, tabelas <code>matches</code>/<code>match_players</code>),
+    então não há histórico real pra mostrar aqui. Isso é próximo passo
+    planejado, não um bug.
+  </p>
+</div>
+
+<script src="/shared.js"></script>
+<script>
+if (requireAuth()) {
+  document.getElementById('usernameDisplay').textContent = getUsername();
+}
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  window.location.href = '/game.html';
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  clearSession();
+  window.location.href = '/index.html';
+});
+</script>
+</body>
+</html>
