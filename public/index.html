@@ -58,16 +58,40 @@
     border: 1px solid #555;
     padding: 6px;
     font-family: monospace;
+    margin: 3px 0;
+    display: block;
+    width: 220px;
   }
+  .error-text { color: #ff5555; font-size: 12px; min-height: 1.2em; }
+  .toggle-link { color: #7799ff; cursor: pointer; text-decoration: underline; font-size: 12px; }
 </style>
 </head>
 <body>
 
 <h1>🔫 Buckshot Roulette Web — cliente de teste manual (PvP)</h1>
 
-<div class="box" id="connectBox">
-  <label>Seu nome/ID: </label>
-  <input id="playerIdInput" placeholder="ex: alice" />
+<div class="box" id="authBox">
+  <div id="loginForm">
+    <strong>Entrar</strong>
+    <input id="loginUsername" placeholder="username" autocomplete="username" />
+    <input id="loginPassword" type="password" placeholder="senha" autocomplete="current-password" />
+    <button id="loginBtn">Entrar</button>
+    <div class="error-text" id="loginError"></div>
+    <span class="toggle-link" id="showRegister">Não tem conta? Cadastre-se</span>
+  </div>
+
+  <div id="registerForm" style="display:none">
+    <strong>Cadastrar</strong>
+    <input id="registerUsername" placeholder="username (3-20 caracteres, letras/números/_)" autocomplete="username" />
+    <input id="registerPassword" type="password" placeholder="senha (mín. 6 caracteres)" autocomplete="new-password" />
+    <button id="registerBtn">Cadastrar</button>
+    <div class="error-text" id="registerError"></div>
+    <span class="toggle-link" id="showLogin">Já tem conta? Entrar</span>
+  </div>
+</div>
+
+<div class="box" id="connectBox" style="display:none">
+  <div>Logado como <strong id="loggedUsername"></strong> <button id="logoutBtn">Sair</button></div>
   <button id="findMatchBtn">Procurar partida</button>
   <div id="connectStatus"></div>
 </div>
@@ -105,13 +129,17 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket = io();
+const TOKEN_KEY = 'buckshot_token';
+const USERNAME_KEY = 'buckshot_username';
 
+let socket = null;
 let myPlayerId = null;
 let opponentId = null;
 let matchId = null;
 let myInventory = [];
 let lastState = null;
+let lastReloadCount = null;
+let reloadAnimTimeout = null;
 
 const ITEM_LABELS = {
   ver_municao: '👁️ Ver munição',
@@ -130,45 +158,196 @@ function log(msg, cls) {
   div.scrollTop = div.scrollHeight;
 }
 
-document.getElementById('findMatchBtn').addEventListener('click', () => {
-  const id = document.getElementById('playerIdInput').value.trim();
-  if (!id) return alert('Digite um ID de jogador');
-  myPlayerId = id;
-  socket.emit('find_match', { playerId: id });
-  document.getElementById('connectStatus').textContent = 'Procurando oponente...';
-  document.getElementById('findMatchBtn').disabled = true;
+function show(id) {
+  document.getElementById(id).style.display = 'block';
+}
+function hide(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+// ---------------------------------------------------------------------
+// AUTENTICAÇÃO
+// ---------------------------------------------------------------------
+
+document.getElementById('showRegister').addEventListener('click', () => {
+  hide('loginForm');
+  show('registerForm');
+});
+document.getElementById('showLogin').addEventListener('click', () => {
+  hide('registerForm');
+  show('loginForm');
 });
 
-socket.on('waiting_for_opponent', () => {
-  log('Aguardando oponente entrar na fila...', 'log-system');
+async function callAuthEndpoint(path, username, password) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'erro desconhecido');
+  return data;
+}
+
+document.getElementById('loginBtn').addEventListener('click', async () => {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  try {
+    const { token, user } = await callAuthEndpoint('/auth/login', username, password);
+    onAuthenticated(token, user.username);
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
 });
 
-socket.on('match_found', (data) => {
-  matchId = data.matchId;
-  myInventory = data.inventory;
-  document.getElementById('connectBox').style.display = 'none';
-  document.getElementById('gameBox').style.display = 'block';
-  log(`Partida encontrada! matchId=${matchId}`, 'log-system');
+document.getElementById('registerBtn').addEventListener('click', async () => {
+  const username = document.getElementById('registerUsername').value.trim();
+  const password = document.getElementById('registerPassword').value;
+  const errEl = document.getElementById('registerError');
+  errEl.textContent = '';
+  try {
+    const { token, user } = await callAuthEndpoint('/auth/register', username, password);
+    onAuthenticated(token, user.username);
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
 });
 
-socket.on('rejoined', (data) => {
-  // Handler que faltava: o servidor já mandava esse evento, mas o client
-  // nunca reagia a ele -- por isso o log mostrava "reconectado" mas a
-  // tela ficava presa em "Procurando oponente...".
-  matchId = data.matchId;
-  myPlayerId = data.yourPlayerId;
-  myInventory = data.inventory;
-  document.getElementById('connectBox').style.display = 'none';
-  document.getElementById('gameBox').style.display = 'block';
-  log(`Reconectado à partida ${matchId} como ${myPlayerId}`, 'log-system');
-  // reseta o contador de recarga pra não disparar a animação de recarga
-  // à toa só por causa do primeiro snapshot recebido após reconectar.
-  lastReloadCount = data.state.reloadCount;
-  applyStateUpdate(data.state);
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  if (socket) socket.disconnect();
+  socket = null;
+  myPlayerId = null;
+  hide('connectBox');
+  hide('gameBox');
+  show('authBox');
 });
 
-let lastReloadCount = null;
-let reloadAnimTimeout = null;
+function onAuthenticated(token, username) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USERNAME_KEY, username);
+  hide('authBox');
+  connectSocket(token, username);
+}
+
+// Se já tinha um token salvo (sessão anterior), pula direto pro login.
+const savedToken = localStorage.getItem(TOKEN_KEY);
+const savedUsername = localStorage.getItem(USERNAME_KEY);
+if (savedToken && savedUsername) {
+  hide('authBox');
+  connectSocket(savedToken, savedUsername);
+} else {
+  show('authBox');
+}
+
+// ---------------------------------------------------------------------
+// CONEXÃO DO SOCKET (só acontece DEPOIS de autenticar)
+// ---------------------------------------------------------------------
+
+function connectSocket(token, username) {
+  myPlayerId = username;
+  document.getElementById('loggedUsername').textContent = username;
+  show('connectBox');
+
+  socket = io({ auth: { token } });
+
+  socket.on('connect_error', (err) => {
+    log(`Falha de conexão/autenticação: ${err.message}`, 'log-error');
+    if (err.message && err.message.includes('unauthorized')) {
+      // token inválido/expirado -- força novo login
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USERNAME_KEY);
+      hide('connectBox');
+      show('authBox');
+    }
+  });
+
+  document.getElementById('findMatchBtn').addEventListener('click', () => {
+    socket.emit('find_match');
+    document.getElementById('connectStatus').textContent = 'Procurando oponente...';
+    document.getElementById('findMatchBtn').disabled = true;
+  });
+
+  socket.on('waiting_for_opponent', () => {
+    log('Aguardando oponente entrar na fila...', 'log-system');
+  });
+
+  socket.on('match_found', (data) => {
+    matchId = data.matchId;
+    myInventory = data.inventory;
+    hide('connectBox');
+    show('gameBox');
+    log(`Partida encontrada! matchId=${matchId}`, 'log-system');
+  });
+
+  socket.on('rejoined', (data) => {
+    matchId = data.matchId;
+    myPlayerId = data.yourPlayerId;
+    myInventory = data.inventory;
+    hide('connectBox');
+    show('gameBox');
+    log(`Reconectado à partida ${matchId} como ${myPlayerId}`, 'log-system');
+    lastReloadCount = data.state.reloadCount;
+    applyStateUpdate(data.state);
+  });
+
+  socket.on('state_update', applyStateUpdate);
+
+  socket.on('inventory_update', (data) => {
+    myInventory = data.inventory;
+    if (lastState) renderMyItems(lastState.currentTurnPlayerId === myPlayerId && !lastState.gameOver);
+  });
+
+  socket.on('item_used', (evt) => {
+    const who = evt.playerId === myPlayerId ? 'Você' : 'Oponente';
+    let msg = `${who} usou ${ITEM_LABELS[evt.itemType] || evt.itemType}`;
+    if (evt.bullet) msg += ` -> bala removida era: ${evt.bullet.toUpperCase()}`;
+    if (evt.newLife !== undefined) msg += ` -> vida agora: ${evt.newLife}`;
+    if (evt.reloaded) msg += ' -> ARMA RECARREGADA';
+    log(msg);
+  });
+
+  socket.on('item_result', (evt) => {
+    log(`🔎 [PRIVADO] Você viu: a bala é ${evt.bullet.toUpperCase()}`, 'log-private');
+  });
+
+  socket.on('shot_resolved', (evt) => {
+    const who = evt.playerId === myPlayerId ? 'Você' : 'Oponente';
+    const alvo = evt.type === 'shot_self' ? 'em si mesmo' : 'no oponente';
+    let msg = `${who} atirou ${alvo} -> bala ${evt.bullet.toUpperCase()}`;
+    if (evt.damage > 0) msg += ` -> ${evt.damage} de dano`;
+    if (evt.chamberEmpty) msg += ' -> ARMA RECARREGADA';
+    log(msg);
+  });
+
+  socket.on('match_ended', (evt) => {
+    const won = evt.winnerId === myPlayerId;
+    log(`🏁 PARTIDA ENCERRADA — vencedor: ${evt.winnerId} (${won ? 'VOCÊ GANHOU!' : 'você perdeu'}) motivo: ${evt.reason}`, 'log-system');
+    document.getElementById('shootSelfBtn').disabled = true;
+    document.getElementById('shootOpponentBtn').disabled = true;
+  });
+
+  socket.on('opponent_disconnected', (evt) => {
+    log(`⚠️ Jogador ${evt.playerId} desconectou.`, 'log-error');
+  });
+  socket.on('opponent_reconnected', (evt) => {
+    log(`✅ Jogador ${evt.playerId} reconectou.`, 'log-system');
+  });
+  socket.on('error_msg', (msg) => {
+    log(`ERRO: ${msg}`, 'log-error');
+    if (!matchId) {
+      document.getElementById('connectStatus').textContent = 'Erro: ' + msg;
+      document.getElementById('findMatchBtn').disabled = false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
+// RENDERIZAÇÃO DO JOGO (igual antes, só que myPlayerId vem do login)
+// ---------------------------------------------------------------------
 
 function applyStateUpdate(state) {
   const previousReloadCount = lastReloadCount;
@@ -182,17 +361,11 @@ function applyStateUpdate(state) {
 
   document.getElementById('reloadCount').textContent = state.reloadCount;
 
-  // Mostra o preview na PRIMEIRA rodada também (previousReloadCount ainda
-  // null), não só quando o reloadCount muda numa recarga -- antes só
-  // funcionava a partir da segunda recarga.
   const isFirstSnapshot = previousReloadCount === null;
   const justReloaded = isFirstSnapshot || state.reloadCount !== previousReloadCount;
   if (justReloaded) {
     showChamberPreview(state.chamberReal, state.chamberVazia);
   }
-  // fora da janela de preview de 5s, NENHUMA informação sobre o pente
-  // fica visível de forma persistente -- nem contagem total, nem
-  // real/vazia.
 
   const isMyTurn = state.currentTurnPlayerId === myPlayerId;
   document.getElementById('turnIndicator').textContent = isMyTurn
@@ -205,24 +378,14 @@ function applyStateUpdate(state) {
   renderMyItems(isMyTurn && !state.gameOver);
 }
 
-socket.on('state_update', applyStateUpdate);
-
-/**
- * Preview ESTÁTICO (não animado) da composição do pente, por 5 segundos,
- * depois some por completo. Não é mais uma animação de embaralhamento --
- * mostra a composição real de uma vez, mas é temporário: passados os 5s,
- * a informação de real/vazia deixa de ser visível de qualquer forma.
- */
 function showChamberPreview(real, vazia) {
   if (reloadAnimTimeout) clearTimeout(reloadAnimTimeout);
   const el = document.getElementById('chamberBreakdown');
-
   const icons = shuffleArray([
     ...Array(real).fill('🔴'),
     ...Array(vazia).fill('⚪'),
   ]);
   el.textContent = icons.join(' ');
-
   reloadAnimTimeout = setTimeout(() => {
     el.textContent = '';
   }, 5000);
@@ -251,75 +414,22 @@ function renderPlayer(domPrefix, playerId, state) {
 function renderMyItems(enabled) {
   const container = document.getElementById('myItems');
   container.innerHTML = '<strong>Seus itens:</strong><br>';
-  myInventory.forEach((itemType, idx) => {
+  myInventory.forEach((itemType) => {
     const btn = document.createElement('button');
     btn.textContent = ITEM_LABELS[itemType] || itemType;
     btn.disabled = !enabled;
     btn.addEventListener('click', () => {
-      socket.emit('use_item', { matchId, playerId: myPlayerId, itemType });
+      socket.emit('use_item', { matchId, itemType });
     });
     container.appendChild(btn);
   });
 }
 
 document.getElementById('shootSelfBtn').addEventListener('click', () => {
-  socket.emit('shoot', { matchId, playerId: myPlayerId, target: 'self' });
+  socket.emit('shoot', { matchId, target: 'self' });
 });
 document.getElementById('shootOpponentBtn').addEventListener('click', () => {
-  socket.emit('shoot', { matchId, playerId: myPlayerId, target: 'opponent' });
-});
-
-socket.on('inventory_update', (data) => {
-  myInventory = data.inventory;
-  if (lastState) renderMyItems(lastState.currentTurnPlayerId === myPlayerId && !lastState.gameOver);
-});
-
-socket.on('item_used', (evt) => {
-  const who = evt.playerId === myPlayerId ? 'Você' : 'Oponente';
-  let msg = `${who} usou ${ITEM_LABELS[evt.itemType] || evt.itemType}`;
-  if (evt.bullet) msg += ` -> bala removida era: ${evt.bullet.toUpperCase()}`;
-  if (evt.newLife !== undefined) msg += ` -> vida agora: ${evt.newLife}`;
-  if (evt.reloaded) msg += ' -> ARMA RECARREGADA';
-  log(msg);
-  // Não mexemos em myInventory aqui — o servidor manda 'inventory_update'
-  // logo em seguida com a lista definitiva, fonte única da verdade.
-});
-
-socket.on('item_result', (evt) => {
-  log(`🔎 [PRIVADO] Você viu: a bala é ${evt.bullet.toUpperCase()}`, 'log-private');
-});
-
-socket.on('shot_resolved', (evt) => {
-  const who = evt.playerId === myPlayerId ? 'Você' : 'Oponente';
-  const alvo = evt.type === 'shot_self' ? 'em si mesmo' : 'no oponente';
-  let msg = `${who} atirou ${alvo} -> bala ${evt.bullet.toUpperCase()}`;
-  if (evt.damage > 0) msg += ` -> ${evt.damage} de dano`;
-  if (evt.chamberEmpty) msg += ' -> ARMA RECARREGADA';
-  log(msg);
-});
-
-socket.on('match_ended', (evt) => {
-  const won = evt.winnerId === myPlayerId;
-  log(`🏁 PARTIDA ENCERRADA — vencedor: ${evt.winnerId} (${won ? 'VOCÊ GANHOU!' : 'você perdeu'}) motivo: ${evt.reason}`, 'log-system');
-  document.getElementById('shootSelfBtn').disabled = true;
-  document.getElementById('shootOpponentBtn').disabled = true;
-});
-
-socket.on('opponent_disconnected', (evt) => {
-  log(`⚠️ Jogador ${evt.playerId} desconectou.`, 'log-error');
-});
-socket.on('opponent_reconnected', (evt) => {
-  log(`✅ Jogador ${evt.playerId} reconectou.`, 'log-system');
-});
-socket.on('error_msg', (msg) => {
-  log(`ERRO: ${msg}`, 'log-error');
-  // Bug reportado: se o erro acontece ANTES de entrar numa partida (ex:
-  // nome duplicado), a tela ficava presa em "Procurando oponente..." e
-  // sem jeito de tentar de novo. Reabilita o formulário nesse caso.
-  if (!matchId) {
-    document.getElementById('connectStatus').textContent = 'Erro: ' + msg + ' Tente outro nome.';
-    document.getElementById('findMatchBtn').disabled = false;
-  }
+  socket.emit('shoot', { matchId, target: 'opponent' });
 });
 </script>
 </body>
