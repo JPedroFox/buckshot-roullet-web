@@ -42,11 +42,24 @@ function resumeTurnTimer(match, onExpire) {
 }
 
 /**
+ * Horário (epoch ms) em que o timer de turno atual esgota, ou null se
+ * não houver timer de turno ativo agora. Usado pro client calcular a
+ * contagem regressiva localmente (Date.now() até esse valor), em vez
+ * de depender do servidor mandar "segundos restantes" a cada tick --
+ * isso evita drift de rede/latência bagunçando a contagem exibida.
+ */
+function getTurnTimerDeadline(match) {
+  if (!match.timers.turnTimer) return null;
+  return match.timers.turnTimerStartedAt + match.timers.turnTimerRemainingMs;
+}
+
+/**
  * Inicia o timer de reconexão (2 min). Independente do timer de turno
  * (seção 9: "nunca somados").
  */
 function startReconnectTimer(match, onExpire) {
   clearReconnectTimer(match);
+  match.timers.reconnectTimerStartedAt = Date.now();
   match.timers.reconnectTimer = setTimeout(onExpire, RECONNECT_TIMEOUT_MS);
 }
 
@@ -55,6 +68,19 @@ function clearReconnectTimer(match) {
     clearTimeout(match.timers.reconnectTimer);
     match.timers.reconnectTimer = null;
   }
+  match.timers.reconnectTimerStartedAt = null;
+}
+
+/**
+ * Horário (epoch ms) em que o timer de reconexão atual esgota, ou
+ * null se não houver timer de reconexão ativo agora. Mesma lógica do
+ * getTurnTimerDeadline -- o timer de reconexão não pausa/retoma (não
+ * existe "pausar a queda de conexão"), então é sempre início + duração
+ * total, sem precisar de remainingMs.
+ */
+function getReconnectTimerDeadline(match) {
+  if (!match.timers.reconnectTimer || !match.timers.reconnectTimerStartedAt) return null;
+  return match.timers.reconnectTimerStartedAt + RECONNECT_TIMEOUT_MS;
 }
 
 module.exports = {
@@ -64,6 +90,8 @@ module.exports = {
   clearTurnTimer,
   pauseTurnTimer,
   resumeTurnTimer,
+  getTurnTimerDeadline,
   startReconnectTimer,
   clearReconnectTimer,
+  getReconnectTimerDeadline,
 };

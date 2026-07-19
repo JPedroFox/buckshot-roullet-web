@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Buckshot Roulette Web - PvE</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+</head>
+<body>
+
+<h1><i class="bi bi-robot"></i> Buckshot Roulette Web — PvE</h1>
+<div class="nav-bar">
+  <a href="/profile.html">
+    <i class="bi bi-arrow-left-circle"></i> Voltar ao perfil
+  </a>
+</div>
+
+<div class="box" id="startBox">
+  <button id="startBtn"><i class="bi bi-play-fill"></i> Iniciar PvE</button>
+  <div id="startStatus"></div>
+</div>
+
+<div class="box" id="gameBox" style="display:none">
+  <p id="phaseIndicator" style="text-align:center; font-weight:bold; letter-spacing:2px; color:#ff8833; text-shadow:0 0 8px rgba(255,136,51,0.4);"></p>
+
+  <div class="players">
+    <div class="player" id="playerA">
+      <div id="playerAName"></div>
+      <div class="life" id="playerALife"></div>
+      <div id="playerAInv"></div>
+    </div>
+    <div class="player" id="playerB">
+      <div id="playerBName"></div>
+      <div class="life" id="playerBLife"></div>
+      <div id="playerBInv"></div>
+    </div>
+  </div>
+
+  <p>Recarga #<span id="reloadCount"></span></p>
+  <p id="chamberBreakdown" style="min-height: 1.2em; color:#ffcc55;"></p>
+  <p id="turnIndicator" style="font-weight:bold"></p>
+
+  <div id="myItems"></div>
+
+  <div class="decision-row" id="decisionRow">
+    <button id="shootSelfBtn"><i class="bi bi-person-fill-down"></i> Atirar em mim mesmo</button>
+    <span class="decision-divider">OU</span>
+    <button id="shootOpponentBtn"><i class="bi bi-crosshair"></i> Atirar na IA</button>
+  </div>
+</div>
+
+<div class="box" id="endBox" style="display:none">
+  <p id="endMessage" style="font-size:1.4rem; font-weight:bold; text-align:center; letter-spacing:2px;"></p>
+  <a class="toggle-link" href="/profile.html"><i class="bi bi-arrow-left-circle"></i> Voltar ao perfil</a>
+</div>
+
+<div class="box">
+  <strong>Log</strong>
+  <div id="log"></div>
+</div>
+
+<script src="/shared.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+if (!requireAuth()) {
+  throw new Error('sem sessão, redirecionando');
+}
+
+let socket = null;
+let matchId = null;
+let myInventory = [];
+let humanId = getUsername();
+let aiLabel = 'IA';
+let lastReloadCount = null;
+let reloadAnimTimeout = null;
+
+const ITEM_LABELS = {
+  ver_municao: 'Ver munição',
+  retirar_municao: 'Retirar munição',
+  travar_adversario: 'Travar adversário',
+  curar: 'Curar',
+  dano_dobrado: 'Dano dobrado',
+};
+
+const ITEM_ICONS = {
+  ver_municao: 'bi-eye',
+  retirar_municao: 'bi-wrench-adjustable',
+  travar_adversario: 'bi-lock-fill',
+  curar: 'bi-heart-pulse-fill',
+  dano_dobrado: 'bi-fire',
+};
+
+function log(msg, cls, icon) {
+  const div = document.getElementById('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  if (icon) {
+    const i = document.createElement('i');
+    i.className = `bi ${icon} log-icon`;
+    line.appendChild(i);
+  }
+  line.appendChild(document.createTextNode(msg));
+  div.appendChild(line);
+  div.scrollTop = div.scrollHeight;
+}
+
+function describeEvent(evt, whoLabel) {
+  if (!evt) return null;
+  if (evt.type === 'use_item') {
+    let msg = `${whoLabel} usou ${ITEM_LABELS[evt.itemType] || evt.itemType}`;
+    if (evt.bullet) msg += ` -> bala removida era: ${evt.bullet.toUpperCase()}`;
+    if (evt.newLife !== undefined) msg += ` -> vida agora: ${evt.newLife}`;
+    if (evt.reloaded) msg += ' -> ARMA RECARREGADA';
+    return { msg, icon: ITEM_ICONS[evt.itemType] };
+  }
+  if (evt.type === 'shot_self' || evt.type === 'shot_opponent') {
+    const alvo = evt.type === 'shot_self' ? 'em si mesmo' : 'no oponente';
+    let msg = `${whoLabel} atirou ${alvo} -> bala ${evt.bullet.toUpperCase()}`;
+    if (evt.damage > 0) msg += ` -> ${evt.damage} de dano`;
+    if (evt.chamberEmpty) msg += ' -> ARMA RECARREGADA';
+    return { msg, icon: null };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------
+// CONEXÃO DO SOCKET
+// ---------------------------------------------------------------------
+
+socket = io({ auth: { token: getToken() } });
+
+socket.on('connect_error', (err) => {
+  log(`Falha de conexão/autenticação: ${err.message}`, 'log-error');
+  if (err.message && err.message.includes('unauthorized')) {
+    clearSession();
+    window.location.href = '/index.html';
+  }
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  socket.emit('pve_start');
+  document.getElementById('startStatus').textContent = 'Iniciando...';
+  document.getElementById('startBtn').disabled = true;
+});
+
+socket.on('pve_started', (data) => {
+  matchId = data.matchId;
+  myInventory = data.inventory;
+  document.getElementById('startBox').style.display = 'none';
+  document.getElementById('gameBox').style.display = 'block';
+  log(`Partida PvE iniciada -- Fase ${data.snapshot.phaseIndex + 1}/${data.snapshot.totalPhases}`, 'log-system', 'bi-play-circle-fill');
+  applySnapshot(data.snapshot);
+});
+
+socket.on('pve_human_event', (data) => {
+  myInventory = data.inventory;
+
+  const humanDesc = describeEvent(data.humanEvent, 'Você');
+  if (humanDesc) log(humanDesc.msg, null, humanDesc.icon);
+
+  if (data.humanPrivateEvent) {
+    log(`[PRIVADO] Você viu: a bala é ${data.humanPrivateEvent.bullet.toUpperCase()}`, 'log-private', 'bi-eye-fill');
+  }
+
+  applySnapshot(data.snapshot);
+});
+
+// Cada ação da IA chega separadamente, com pausas simuladas em
+// ai.js (server-side) -- é isso que dá a sensação de "ela está
+// pensando" em vez de tudo aparecer de uma vez.
+socket.on('pve_ai_event', (data) => {
+  myInventory = data.inventory;
+  const desc = describeEvent(data.event, `🤖 ${aiLabel}`);
+  if (desc) log(desc.msg, 'log-system', desc.icon);
+  applySnapshot(data.snapshot);
+});
+
+socket.on('pve_update', (data) => {
+  myInventory = data.inventory;
+
+  if (data.phaseChanged && !data.snapshot.finished) {
+    log(`Fase concluída! Arma recarregada -- avançando para a Fase ${data.snapshot.phaseIndex + 1}/${data.snapshot.totalPhases}`, 'log-system', 'bi-arrow-repeat');
+  }
+
+  applySnapshot(data.snapshot, data.phaseChanged);
+});
+
+socket.on('error_msg', (msg) => {
+  log(`ERRO: ${msg}`, 'log-error');
+});
+
+// ---------------------------------------------------------------------
+// RENDERIZAÇÃO DO JOGO
+// ---------------------------------------------------------------------
+
+function applySnapshot(snapshot, forceChamberPreview) {
+  document.getElementById('phaseIndicator').innerHTML =
+    `<i class="bi bi-layers-fill"></i> Fase ${snapshot.phaseIndex + 1} de ${snapshot.totalPhases}`;
+
+  renderSide('playerA', 'Você', 'bi-person-fill', snapshot.humanLife, myInventory.length, snapshot.currentTurnPlayerId === snapshot.humanId);
+  renderSide('playerB', aiLabel, 'bi-robot', snapshot.aiLife, null, snapshot.currentTurnPlayerId !== snapshot.humanId);
+
+  document.getElementById('reloadCount').textContent = snapshot.reloadCount;
+
+  const previousReloadCount = lastReloadCount;
+  lastReloadCount = snapshot.reloadCount;
+  const isFirstSnapshot = previousReloadCount === null;
+  // Não dá pra confiar só em "reloadCount mudou" -- esse número reseta
+  // pra 1 a cada fase nova, então se a fase anterior nunca tinha
+  // recarregado (comum na Fase 1, só 2 vidas), a comparação 1 !== 1
+  // dá falso e o preview nunca aparece, mesmo o pente sendo outro de
+  // verdade. `forceChamberPreview` (mandado explicitamente quando o
+  // servidor avisa que a fase mudou) cobre esse caso.
+  if (isFirstSnapshot || snapshot.reloadCount !== previousReloadCount || forceChamberPreview) {
+    showChamberPreview(snapshot.chamberReal, snapshot.chamberVazia);
+  }
+
+  if (snapshot.finished) {
+    document.getElementById('gameBox').style.display = 'none';
+    document.getElementById('endBox').style.display = 'block';
+    const won = snapshot.result === 'victory';
+    const msgEl = document.getElementById('endMessage');
+    msgEl.innerHTML = won
+      ? '<i class="bi bi-trophy-fill"></i> VOCÊ VENCEU AS 3 FASES!'
+      : '<i class="bi bi-emoji-dizzy-fill"></i> VOCÊ FOI DERROTADO';
+    msgEl.style.color = won ? '#ffcc55' : '#eeeeee';
+    msgEl.style.textShadow = won
+      ? '0 0 15px rgba(255, 204, 85, 0.6)'
+      : '0 0 15px rgba(255, 255, 255, 0.4)';
+    return;
+  }
+
+  const isMyTurn = snapshot.currentTurnPlayerId === snapshot.humanId && !snapshot.phaseOver;
+  document.getElementById('turnIndicator').textContent = snapshot.phaseOver
+    ? 'Fim de fase...'
+    : (isMyTurn ? 'SUA VEZ' : `Vez de: ${aiLabel}`);
+  document.getElementById('shootSelfBtn').disabled = !isMyTurn;
+  document.getElementById('shootOpponentBtn').disabled = !isMyTurn;
+  document.getElementById('decisionRow').style.display = isMyTurn ? 'flex' : 'none';
+  renderMyItems(isMyTurn);
+}
+
+function renderSide(domPrefix, label, icon, life, inventoryCount, isTurn) {
+  document.getElementById(domPrefix).classList.toggle('turn', isTurn);
+  document.getElementById(domPrefix + 'Name').innerHTML = `<i class="bi ${icon}"></i> ${label}`;
+  const lifeEl = document.getElementById(domPrefix + 'Life');
+  if (life <= 0) {
+    lifeEl.innerHTML = '<i class="bi bi-emoji-dizzy-fill skull-icon"></i>';
+  } else {
+    lifeEl.innerHTML = '<i class="bi bi-lightning-charge-fill life-icon"></i>'.repeat(Math.max(life, 0));
+  }
+  const invEl = document.getElementById(domPrefix + 'Inv');
+  if (inventoryCount === null) {
+    invEl.innerHTML = ''; // IA: não expomos contagem de itens dela, ela não é "pública" do mesmo jeito que em PvP
+  } else {
+    invEl.innerHTML = `<i class="bi bi-bag-fill"></i> Itens no inventário: ${inventoryCount}`;
+  }
+}
+
+const CHAMBER_SLOTS = 8;
+
+function showChamberPreview(real, vazia) {
+  if (reloadAnimTimeout) clearTimeout(reloadAnimTimeout);
+  const el = document.getElementById('chamberBreakdown');
+  const icons = shuffleArray([
+    ...Array(real).fill('<i class="bi bi-circle-fill chamber-live"></i>'),
+    ...Array(vazia).fill('<i class="bi bi-circle-fill chamber-blank"></i>'),
+  ]);
+  const slots = Array.from({ length: CHAMBER_SLOTS }, (_, i) =>
+    `<div class="chamber-slot">${icons[i] || ''}</div>`
+  );
+  el.innerHTML = slots.join('');
+  reloadAnimTimeout = setTimeout(() => {
+    el.innerHTML = '';
+  }, 5000);
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function renderMyItems(enabled) {
+  const container = document.getElementById('myItems');
+  if (myInventory.length === 0) {
+    container.innerHTML = '<strong>Seus itens:</strong> (nenhum)';
+    return;
+  }
+  container.innerHTML = '<strong>Seus itens:</strong>';
+  myInventory.forEach((itemType) => {
+    const btn = document.createElement('button');
+    btn.innerHTML = `<i class="bi ${ITEM_ICONS[itemType] || 'bi-box-seam'}"></i> ${ITEM_LABELS[itemType] || itemType}`;
+    btn.disabled = !enabled;
+    btn.addEventListener('click', () => {
+      socket.emit('pve_use_item', { matchId, itemType });
+    });
+    container.appendChild(btn);
+  });
+}
+
+document.getElementById('shootSelfBtn').addEventListener('click', () => {
+  socket.emit('pve_shoot', { matchId, target: 'self' });
+});
+document.getElementById('shootOpponentBtn').addEventListener('click', () => {
+  socket.emit('pve_shoot', { matchId, target: 'opponent' });
+});
+</script>
+</body>
+</html>

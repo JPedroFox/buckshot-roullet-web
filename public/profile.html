@@ -13,6 +13,7 @@
 <div class="box">
   <div>Logado como <strong id="usernameDisplay"></strong></div>
   <button id="playBtn"><i class="bi bi-controller"></i> Jogar PvP</button>
+  <button id="playPveBtn"><i class="bi bi-robot"></i> Jogar PvE</button>
   <button id="leaderboardBtn"><i class="bi bi-trophy-fill"></i> Ver ranking</button>
   <button id="logoutBtn"><i class="bi bi-box-arrow-right"></i> Sair</button>
 </div>
@@ -87,6 +88,10 @@ async function loadStats() {
 
 document.getElementById('playBtn').addEventListener('click', () => {
   window.location.href = '/game.html';
+});
+
+document.getElementById('playPveBtn').addEventListener('click', () => {
+  window.location.href = '/game-pve.html';
 });
 
 document.getElementById('leaderboardBtn').addEventListener('click', () => {

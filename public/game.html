@@ -38,6 +38,8 @@
   <p>Recarga #<span id="reloadCount"></span></p>
   <p id="chamberBreakdown" style="min-height: 1.2em; color:#ffcc55;"></p>
   <p id="turnIndicator" style="font-weight:bold"></p>
+  <p id="turnTimerDisplay" style="display:none; font-weight:bold;"></p>
+  <p id="reconnectTimerDisplay" style="display:none; font-weight:bold; color:#ff8833;"></p>
 
   <div id="myItems"></div>
 
@@ -145,6 +147,9 @@ socket.on('rejoined', (data) => {
   log(`Reconectado à partida ${matchId} como ${myPlayerId}`, 'log-system');
   lastReloadCount = data.state.reloadCount;
   applyStateUpdate(data.state);
+  if (data.activeTurnTimerDeadline) {
+    startTurnTimerDisplay(data.activeTurnTimerDeadline, data.activeTurnTimerPlayerId);
+  }
 });
 
 socket.on('state_update', applyStateUpdate);
@@ -182,6 +187,8 @@ socket.on('match_ended', (evt) => {
   document.getElementById('shootSelfBtn').disabled = true;
   document.getElementById('shootOpponentBtn').disabled = true;
   document.getElementById('decisionRow').style.display = 'none';
+  stopTurnTimerDisplay();
+  stopReconnectTimerDisplay();
 });
 
 socket.on('opponent_disconnected', (evt) => {
@@ -189,7 +196,19 @@ socket.on('opponent_disconnected', (evt) => {
 });
 socket.on('opponent_reconnected', (evt) => {
   log(`Jogador ${evt.playerId} reconectou.`, 'log-system', 'bi-check-circle-fill');
+  stopReconnectTimerDisplay();
 });
+
+socket.on('turn_timer_started', (data) => {
+  stopReconnectTimerDisplay(); // mutuamente exclusivos -- se o turno tá rodando, ninguém tá em reconexão
+  startTurnTimerDisplay(data.deadline, data.playerId);
+});
+
+socket.on('reconnect_timer_started', (data) => {
+  stopTurnTimerDisplay(); // mutuamente exclusivos
+  startReconnectTimerDisplay(data.deadline, data.playerId);
+});
+
 socket.on('error_msg', (msg) => {
   log(`ERRO: ${msg}`, 'log-error');
   if (!matchId) {
@@ -201,6 +220,82 @@ socket.on('error_msg', (msg) => {
 // ---------------------------------------------------------------------
 // RENDERIZAÇÃO DO JOGO
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// TIMERS VISÍVEIS (turno e reconexão) -- seção 9
+// ---------------------------------------------------------------------
+// A contagem é calculada LOCALMENTE a partir de um deadline (horário
+// absoluto) mandado pelo servidor, não por ticks recebidos via rede --
+// isso evita que latência/drift bagunce o número exibido.
+
+let turnTimerInterval = null;
+let reconnectTimerInterval = null;
+
+function formatSeconds(ms) {
+  const totalSeconds = Math.max(Math.ceil(ms / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function startTurnTimerDisplay(deadline, playerId) {
+  stopTurnTimerDisplay();
+  const el = document.getElementById('turnTimerDisplay');
+  el.style.display = 'block';
+
+  const who = playerId === myPlayerId ? 'Você tem' : 'Oponente tem';
+
+  function tick() {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      el.textContent = `${who === 'Você tem' ? 'Seu' : 'O'} tempo esgotou`;
+      stopTurnTimerDisplay();
+      return;
+    }
+    el.innerHTML = `<i class="bi bi-stopwatch-fill"></i> ${who} ${formatSeconds(remaining)} pra agir`;
+    el.style.color = remaining < 10000 ? '#ff3333' : '#ffcc55';
+  }
+
+  tick();
+  turnTimerInterval = setInterval(tick, 250);
+}
+
+function stopTurnTimerDisplay() {
+  if (turnTimerInterval) {
+    clearInterval(turnTimerInterval);
+    turnTimerInterval = null;
+  }
+  document.getElementById('turnTimerDisplay').style.display = 'none';
+}
+
+function startReconnectTimerDisplay(deadline, playerId) {
+  stopReconnectTimerDisplay();
+  const el = document.getElementById('reconnectTimerDisplay');
+  el.style.display = 'block';
+
+  const who = playerId === myPlayerId ? 'Você está' : 'Oponente está';
+
+  function tick() {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      el.textContent = 'Tempo de reconexão esgotado';
+      stopReconnectTimerDisplay();
+      return;
+    }
+    el.innerHTML = `<i class="bi bi-wifi-off"></i> ${who} desconectado -- ${formatSeconds(remaining)} pra reconectar antes da derrota automática`;
+  }
+
+  tick();
+  reconnectTimerInterval = setInterval(tick, 250);
+}
+
+function stopReconnectTimerDisplay() {
+  if (reconnectTimerInterval) {
+    clearInterval(reconnectTimerInterval);
+    reconnectTimerInterval = null;
+  }
+  document.getElementById('reconnectTimerDisplay').style.display = 'none';
+}
 
 function applyStateUpdate(state) {
   const previousReloadCount = lastReloadCount;

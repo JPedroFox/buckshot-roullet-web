@@ -5,12 +5,14 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const gameManager = require('./gameManager');
+const pveManager = require('./pveManager');
 const timers = require('./timers');
 const authRoutes = require('./authRoutes');
 const rankingRoutes = require('./rankingRoutes');
 const { verifyToken } = require('./auth');
 const { saveMatchResult } = require('./matchRepository');
 const { applyAction, currentPlayerId, ACTION_USE_ITEM, ACTION_SHOOT } = require('../src/core/turn');
+const { applyHumanActionOnly, runAiTurnsIfNeeded, advancePhase, PVE_PHASES } = require('../src/core/pve');
 
 const PVP_CONFIG = { maxLives: 6, itemsPerReload: 4, mode: 'pvp' };
 
@@ -109,8 +111,40 @@ function createServer() {
     });
   }
 
+  /**
+   * Snapshot seguro do estado de uma partida PvE, pro client. Mesma
+   * regra de nunca vazar a sequência completa do chamber (seção 12) --
+   * só contagens, que já são públicas por definição (seção 5). Como
+   * PvE é 1 jogador só, não precisa distinguir "público" de "privado"
+   * do jeito que PvP precisa -- tudo aqui já é só do próprio jogador.
+   */
+  function pveStateSnapshot(entry) {
+    const { match } = entry;
+    const seq = match.state.chamber.sequencia;
+    return {
+      phaseIndex: match.phaseIndex,
+      totalPhases: PVE_PHASES.length,
+      humanLife: match.state.players[match.humanId].life,
+      aiLife: match.state.players[match.aiId].life,
+      maxLives: match.state.maxLives,
+      currentTurnPlayerId: currentPlayerId(match.state),
+      humanId: match.humanId,
+      chamberTotal: seq.length,
+      chamberReal: seq.filter((b) => b === 'real').length,
+      chamberVazia: seq.length - seq.filter((b) => b === 'real').length,
+      reloadCount: match.state.reloadCount,
+      phaseOver: match.state.gameOver, // a FASE atual terminou (pode ter mais fases)
+      finished: match.finished, // a PARTIDA de PvE inteira terminou (todas as fases)
+      result: match.result, // 'victory' | 'defeat' | null
+    };
+  }
+
   function scheduleTurnTimer(matchId, match) {
     timers.startTurnTimer(match, () => handleTurnTimeout(matchId));
+    broadcastPublic(matchId, 'turn_timer_started', {
+      playerId: currentPlayerId(match.state),
+      deadline: timers.getTurnTimerDeadline(match),
+    });
   }
 
   /**
@@ -166,6 +200,14 @@ function createServer() {
     });
   }
 
+  function scheduleReconnectTimer(matchId, match, playerId) {
+    timers.startReconnectTimer(match, () => handleReconnectTimeout(matchId));
+    broadcastPublic(matchId, 'reconnect_timer_started', {
+      playerId,
+      deadline: timers.getReconnectTimerDeadline(match),
+    });
+  }
+
   function afterAction(matchId, match) {
     broadcastPublic(matchId, 'state_update', publicStateSnapshot(match));
 
@@ -186,7 +228,7 @@ function createServer() {
     if (!nextSocketId) {
       // é a vez de quem está desconectado — começa o timer de reconexão
       // (seção 9: "só começa quando chegar a vez de quem caiu")
-      timers.startReconnectTimer(match, () => handleReconnectTimeout(matchId));
+      scheduleReconnectTimer(matchId, match, nextPlayerId);
     } else {
       scheduleTurnTimer(matchId, match);
     }
@@ -221,12 +263,22 @@ function createServer() {
       yourPlayerId: playerId,
       inventory: privateInventory(match, playerId),
       state: publicStateSnapshot(match),
+      // Cobre o caso de reconectar no meio do turno do OPONENTE: sem
+      // isso, o timer já rodando só aparece pro reconectado na próxima
+      // troca de turno, porque o broadcast normal só dispara quando o
+      // timer é (re)iniciado, não quando alguém entra depois.
+      activeTurnTimerDeadline: timers.getTurnTimerDeadline(match),
+      activeTurnTimerPlayerId: currentPlayerId(match.state),
     });
     broadcastPublic(matchId, 'opponent_reconnected', { playerId });
 
     if (currentPlayerId(match.state) === playerId) {
       // retoma o timer de turno de onde parou (seção 9)
       timers.resumeTurnTimer(match, () => handleTurnTimeout(matchId));
+      broadcastPublic(matchId, 'turn_timer_started', {
+        playerId,
+        deadline: timers.getTurnTimerDeadline(match),
+      });
     }
   }
 
@@ -335,6 +387,117 @@ function createServer() {
       doRejoin(socket, matchId, match, playerId);
     });
 
+    // -----------------------------------------------------------------
+    // PVE -- eventos separados dos de PvP, mesmo prefixo "pve_" pra não
+    // ter dúvida nenhuma no client sobre qual modo cada evento é.
+    // -----------------------------------------------------------------
+
+    socket.on('pve_start', () => {
+      const humanId = socket.data.username; // identidade verificada, não vem do payload
+
+      const active = pveManager.findActiveMatchByHumanId(humanId);
+      if (active) {
+        pveManager.setSocketId(active.matchId, socket.id);
+        socket.emit('pve_started', {
+          matchId: active.matchId,
+          inventory: active.entry.match.state.players[humanId].inventory,
+          snapshot: pveStateSnapshot(active.entry),
+        });
+        return;
+      }
+
+      const matchId = pveManager.createMatch(humanId, socket.id);
+      const entry = pveManager.getMatch(matchId);
+      socket.emit('pve_started', {
+        matchId,
+        inventory: entry.match.state.players[humanId].inventory,
+        snapshot: pveStateSnapshot(entry),
+      });
+    });
+
+    // Pausa proposital entre "a fase acabou" e "a fase nova está de pé",
+    // pra dar tempo do jogador perceber a virada (vida zerada de quem
+    // perdeu, recarga acontecendo) antes da tela pular pro estado novo.
+    const PHASE_TRANSITION_DELAY_MS = 2500;
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Compartilhado entre pve_use_item e pve_shoot. Emite a ação do
+     * humano IMEDIATAMENTE (feedback instantâneo pro próprio jogador),
+     * e só depois deixa a IA "pensar" e agir -- cada ação dela chega
+     * ao vivo via 'pve_ai_event', com as pausas simuladas em ai.js,
+     * em vez de tudo aparecer de uma vez no final do turno.
+     *
+     * Se a fase terminar (por ação do humano OU da IA), NÃO avança pra
+     * fase seguinte na hora -- espera PHASE_TRANSITION_DELAY_MS com o
+     * estado "congelado" no fim da fase, só então chama advancePhase()
+     * e manda o snapshot da fase nova (ou do fim de partida).
+     */
+    async function handlePveAction(socket, entry, humanId, action) {
+      const { result, phaseIndexBefore } = applyHumanActionOnly(entry.match, action);
+
+      socket.emit('pve_human_event', {
+        humanEvent: result.publicEvent,
+        humanPrivateEvent: result.privateEvent,
+        inventory: entry.match.state.players[humanId].inventory,
+        snapshot: pveStateSnapshot(entry),
+      });
+
+      let aiEvents = [];
+      if (!entry.match.state.gameOver) {
+        aiEvents = await runAiTurnsIfNeeded(entry.match, (aiEvent) => {
+          socket.emit('pve_ai_event', {
+            event: aiEvent,
+            inventory: entry.match.state.players[humanId].inventory,
+            snapshot: pveStateSnapshot(entry),
+          });
+        });
+      }
+
+      if (entry.match.state.gameOver) {
+        // fase (ou partida inteira) terminou -- segura aqui, com o
+        // snapshot ainda mostrando o estado de FIM DE FASE (vida
+        // zerada de quem perdeu), antes de avançar de verdade.
+        await sleep(PHASE_TRANSITION_DELAY_MS);
+        advancePhase(entry.match);
+      }
+
+      socket.emit('pve_update', {
+        aiEvents,
+        phaseChanged: entry.match.phaseIndex !== phaseIndexBefore,
+        inventory: entry.match.finished ? [] : entry.match.state.players[humanId].inventory,
+        snapshot: pveStateSnapshot(entry),
+      });
+    }
+
+    socket.on('pve_use_item', async ({ matchId, itemType }) => {
+      const humanId = socket.data.username;
+      const entry = pveManager.getMatch(matchId);
+      if (!entry) return socket.emit('error_msg', 'partida não encontrada');
+      if (entry.humanId !== humanId) return socket.emit('error_msg', 'você não pertence a essa partida');
+
+      try {
+        await handlePveAction(socket, entry, humanId, { type: ACTION_USE_ITEM, itemType });
+      } catch (err) {
+        socket.emit('error_msg', err.message);
+      }
+    });
+
+    socket.on('pve_shoot', async ({ matchId, target }) => {
+      const humanId = socket.data.username;
+      const entry = pveManager.getMatch(matchId);
+      if (!entry) return socket.emit('error_msg', 'partida não encontrada');
+      if (entry.humanId !== humanId) return socket.emit('error_msg', 'você não pertence a essa partida');
+
+      try {
+        await handlePveAction(socket, entry, humanId, { type: ACTION_SHOOT, target });
+      } catch (err) {
+        socket.emit('error_msg', err.message);
+      }
+    });
+
     socket.on('disconnect', () => {
       if (waitingSocket && waitingSocket.socket.id === socket.id) {
         waitingSocket = null;
@@ -353,7 +516,7 @@ function createServer() {
       if (isTheirTurn) {
         // caiu no PRÓPRIO turno: pausa timer de turno, inicia reconexão
         timers.pauseTurnTimer(match);
-        timers.startReconnectTimer(match, () => handleReconnectTimeout(matchId));
+        scheduleReconnectTimer(matchId, match, playerId);
       }
       // caiu no turno do oponente: não faz nada agora (seção 9) —
       // o timer de reconexão só começa quando chegar a vez dele,
