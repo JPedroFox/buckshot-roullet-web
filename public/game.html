@@ -58,9 +58,13 @@
 <script src="/shared.js"></script>
 <script src="/socket.io/socket.io.js"></script>
 <script>
+(async () => {
 if (!requireAuth()) {
   // requireAuth já redireciona pra /index.html; interrompe o resto do script
   throw new Error('sem sessão, redirecionando');
+}
+if (!(await requirePveCompleted())) {
+  return; // requirePveCompleted já redireciona pro perfil com aviso
 }
 
 const myUsername = getUsername();
@@ -393,6 +397,7 @@ document.getElementById('shootSelfBtn').addEventListener('click', () => {
 document.getElementById('shootOpponentBtn').addEventListener('click', () => {
   socket.emit('shoot', { matchId, target: 'opponent' });
 });
+})();
 </script>
 </body>
 </html>

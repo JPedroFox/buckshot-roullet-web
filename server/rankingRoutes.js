@@ -3,11 +3,19 @@
 const express = require('express');
 const { requireAuthHeader } = require('./authMiddleware');
 const { getLeaderboard, resetSeason, getSeasonStartedAt } = require('./rankingRepository');
+const { hasCompletedPveMatch } = require('./matchRepository');
 
 const router = express.Router();
 
 router.get('/leaderboard', requireAuthHeader, async (req, res) => {
   try {
+    const pveDone = await hasCompletedPveMatch(req.user.sub);
+    if (!pveDone) {
+      return res.status(403).json({
+        error: 'Vença uma partida de PvE (as 3 fases) primeiro antes de ver o ranking.',
+      });
+    }
+
     const [leaderboard, seasonStartedAt] = await Promise.all([
       getLeaderboard(),
       getSeasonStartedAt(),

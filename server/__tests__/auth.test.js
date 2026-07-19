@@ -5,9 +5,57 @@ process.env.JWT_SECRET = 'test-secret';
 
 const express = require('express');
 const request = require('supertest');
-const authRoutes = require('../authRoutes');
-const { pool } = require('../db');
 const { verifyToken } = require('../auth');
+
+const users = new Map();
+let nextUserId = 1;
+
+const pool = {
+  async query(text, params = []) {
+    const sql = String(text).trim().replace(/\s+/g, ' ');
+
+    if (sql === 'DELETE FROM users') {
+      users.clear();
+      nextUserId = 1;
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (sql === 'SELECT id FROM users WHERE username = $1') {
+      const username = params[0];
+      const user = users.get(username);
+      return { rows: user ? [{ id: user.id }] : [], rowCount: user ? 1 : 0 };
+    }
+
+    if (sql === 'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username') {
+      const [username, passwordHash] = params;
+      if (users.has(username)) {
+        throw new Error('duplicate key value violates unique constraint');
+      }
+      const user = { id: nextUserId++, username, password_hash: passwordHash };
+      users.set(username, user);
+      return { rows: [{ id: user.id, username: user.username }], rowCount: 1 };
+    }
+
+    if (sql === 'SELECT id, username, password_hash FROM users WHERE username = $1') {
+      const username = params[0];
+      const user = users.get(username);
+      return { rows: user ? [{ id: user.id, username: user.username, password_hash: user.password_hash }] : [], rowCount: user ? 1 : 0 };
+    }
+
+    if (sql === 'SELECT password_hash FROM users WHERE username = $1') {
+      const username = params[0];
+      const user = users.get(username);
+      return { rows: user ? [{ password_hash: user.password_hash }] : [], rowCount: user ? 1 : 0 };
+    }
+
+    throw new Error(`Unexpected SQL in auth test: ${sql}`);
+  },
+  async end() {},
+};
+
+jest.mock('../db', () => ({ pool }));
+
+const authRoutes = require('../authRoutes');
 
 function buildApp() {
   const app = express();

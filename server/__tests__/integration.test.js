@@ -3,6 +3,10 @@
 process.env.JWT_SECRET = 'test-secret';
 
 const jwt = require('jsonwebtoken');
+jest.mock('../matchRepository', () => ({
+  saveMatchResult: jest.fn().mockResolvedValue(0),
+  hasCompletedPveMatch: jest.fn().mockResolvedValue(true),
+}));
 const { createServer } = require('../index');
 const gameManager = require('../gameManager');
 const { pool } = require('../db');
@@ -12,12 +16,6 @@ let httpServer;
 let io;
 let port;
 
-// `sub: null` de propósito: esses usernames de teste NÃO existem na
-// tabela `users` (não passaram por /auth/register), então não têm um
-// id bigint real. Se sub fosse a string do username, a tentativa de
-// persistir resultado de partida quebraria (bigint inválido). Com
-// sub null, matchRepository.saveMatchResult grava a partida mas pula
-// a atualização de estatísticas do usuário (checa `if (p.userId)`).
 function tokenFor(username) {
   return jwt.sign({ sub: null, username }, process.env.JWT_SECRET, { expiresIn: '1h' });
 }

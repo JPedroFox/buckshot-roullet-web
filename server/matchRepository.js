@@ -17,22 +17,40 @@ const { pool } = require('./db');
  * @param {Array<{ userId: number, finalLives: number, result: 'win'|'loss' }>} params.players
  * @returns {Promise<number>} o id da partida criada
  */
-async function saveMatchResult({ mode, status, players }) {
+/**
+ * Salva o resultado de uma partida encerrada (PvP ou PvE): cria a
+ * linha em `matches`, uma linha em `match_players` por participante, e
+ * atualiza as estatísticas em `users` (seção 10: +1 ponto por vitória,
+ * -0.5 por derrota) -- SÓ pra PvP, conforme a seção 10 explicita
+ * ("conta SOMENTE partidas PvP"). PvE é salvo normalmente pro
+ * histórico pessoal (seção 11), mas nunca mexe nos pontos/ranking.
+ *
+ * Tudo dentro de uma transação -- ou tudo é salvo, ou nada é (evita
+ * partida meio-salva se o processo cair no meio do caminho).
+ *
+ * @param {Object} params
+ * @param {'pvp'|'pve'} params.mode
+ * @param {'finished'|'abandoned'|'cancelled'} params.status
+ * @param {number|null} [params.phaseReached] - só relevante pra PvE
+ * @param {Array<{ userId: number|null, finalLives: number, result: 'win'|'loss'|'none', isAi?: boolean }>} params.players
+ * @returns {Promise<number>} o id da partida criada
+ */
+async function saveMatchResult({ mode, status, phaseReached = null, players }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const matchResult = await client.query(
-      `INSERT INTO matches (mode, status, ended_at) VALUES ($1, $2, now()) RETURNING id`,
-      [mode, status]
+      `INSERT INTO matches (mode, status, phase_reached, ended_at) VALUES ($1, $2, $3, now()) RETURNING id`,
+      [mode, status, phaseReached]
     );
     const matchId = matchResult.rows[0].id;
 
     for (const p of players) {
       await client.query(
-        `INSERT INTO match_players (match_id, user_id, final_lives, result)
-         VALUES ($1, $2, $3, $4)`,
-        [matchId, p.userId, p.finalLives, p.result]
+        `INSERT INTO match_players (match_id, user_id, is_ai, final_lives, result)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [matchId, p.userId, p.isAi || false, p.finalLives, p.result]
       );
 
       // Ranking (seção 10) só conta PvP, e só se tivermos um user_id de
@@ -66,4 +84,27 @@ async function saveMatchResult({ mode, status, players }) {
   }
 }
 
-module.exports = { saveMatchResult };
+/**
+ * Verifica se um usuário já completou pelo menos uma partida de PvE
+ * até o fim (vitória OU derrota -- o que importa pro tutorial é ter
+ * passado pela experiência completa, não necessariamente vencido as 3
+ * fases). Usado pra liberar PvP/ranking (bloqueio de tutorial).
+ */
+/**
+ * Verifica se um usuário já VENCEU uma partida de PvE (as 3 fases
+ * inteiras) -- não basta ter só jogado até o fim e perdido. Usado pra
+ * liberar PvP/ranking (bloqueio de tutorial).
+ */
+async function hasCompletedPveMatch(userId) {
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM matches m
+       JOIN match_players mp ON mp.match_id = m.id
+       WHERE m.mode = 'pve' AND m.status = 'finished' AND mp.result = 'win' AND mp.user_id = $1
+     ) AS completed`,
+    [userId]
+  );
+  return result.rows[0].completed;
+}
+
+module.exports = { saveMatchResult, hasCompletedPveMatch };

@@ -4,6 +4,7 @@ const express = require('express');
 const { registerUser, loginUser, AuthError } = require('./auth');
 const { requireAuthHeader } = require('./authMiddleware');
 const { getUserStats } = require('./rankingRepository');
+const { hasCompletedPveMatch } = require('./matchRepository');
 
 const router = express.Router();
 
@@ -43,7 +44,8 @@ router.get('/me', requireAuthHeader, async (req, res) => {
     if (!stats) {
       return res.status(404).json({ error: 'usuário não encontrado' });
     }
-    res.status(200).json({ user: stats });
+    const pveCompleted = await hasCompletedPveMatch(req.user.sub);
+    res.status(200).json({ user: { ...stats, pveCompleted } });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('me error:', err);

@@ -18,6 +18,18 @@
   <button id="logoutBtn"><i class="bi bi-box-arrow-right"></i> Sair</button>
 </div>
 
+<div class="box" id="tutorialGateBox" style="display:none;">
+  <p style="font-weight:bold; color:#ff8833;">
+    <i class="bi bi-mortarboard-fill"></i> Vença uma partida de PvE primeiro
+  </p>
+  <p style="font-size:0.9rem; color:#aaa;">
+    PvP e o ranking ficam disponíveis depois que você jogar uma partida
+    de PvE até o fim -- vencendo as 3 fases (não basta jogar e perder). É a
+    forma mais rápida de aprender as regras antes de enfrentar outro
+    jogador de verdade.
+  </p>
+</div>
+
 <div class="box">
   <strong>Estatísticas (PvP)</strong>
   <div id="statsContent" class="stats-loading">carregando...</div>
@@ -36,6 +48,7 @@ async function loadStats() {
   const badgeEl = document.getElementById('qualificationBadge');
   try {
     const { user } = await fetchAuthed('/auth/me');
+    applyTutorialGate(user.pveCompleted);
     statsEl.innerHTML = `
       <div class="stat-section-label"><i class="bi bi-calendar3"></i> Temporada</div>
       <div class="stat-grid">
@@ -83,7 +96,20 @@ async function loadStats() {
     }
   } catch (err) {
     statsEl.textContent = 'Não foi possível carregar as estatísticas: ' + err.message;
+    applyTutorialGate(false); // se não sabemos o status, trata como bloqueado por segurança
   }
+}
+
+function applyTutorialGate(pveCompleted) {
+  const gateBox = document.getElementById('tutorialGateBox');
+  const playBtn = document.getElementById('playBtn');
+  const leaderboardBtn = document.getElementById('leaderboardBtn');
+
+  gateBox.style.display = pveCompleted ? 'none' : 'block';
+  playBtn.disabled = !pveCompleted;
+  leaderboardBtn.disabled = !pveCompleted;
+  playBtn.title = pveCompleted ? '' : 'Complete uma partida de PvE primeiro';
+  leaderboardBtn.title = pveCompleted ? '' : 'Complete uma partida de PvE primeiro';
 }
 
 document.getElementById('playBtn').addEventListener('click', () => {

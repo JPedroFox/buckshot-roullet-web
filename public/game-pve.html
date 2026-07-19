@@ -39,6 +39,7 @@
   <p>Recarga #<span id="reloadCount"></span></p>
   <p id="chamberBreakdown" style="min-height: 1.2em; color:#ffcc55;"></p>
   <p id="turnIndicator" style="font-weight:bold"></p>
+  <p id="turnTimerDisplay" style="display:none; font-weight:bold;"></p>
 
   <div id="myItems"></div>
 
@@ -143,6 +144,47 @@ document.getElementById('startBtn').addEventListener('click', () => {
   document.getElementById('startBtn').disabled = true;
 });
 
+socket.on('pve_turn_timer_started', (data) => {
+  startTurnTimerDisplay(data.deadline);
+});
+
+let turnTimerInterval = null;
+
+function formatSeconds(ms) {
+  const totalSeconds = Math.max(Math.ceil(ms / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function startTurnTimerDisplay(deadline) {
+  stopTurnTimerDisplay();
+  const el = document.getElementById('turnTimerDisplay');
+  el.style.display = 'block';
+
+  function tick() {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      el.textContent = 'Tempo esgotado';
+      stopTurnTimerDisplay();
+      return;
+    }
+    el.innerHTML = `<i class="bi bi-stopwatch-fill"></i> Você tem ${formatSeconds(remaining)} pra agir`;
+    el.style.color = remaining < 10000 ? '#ff3333' : '#ffcc55';
+  }
+
+  tick();
+  turnTimerInterval = setInterval(tick, 250);
+}
+
+function stopTurnTimerDisplay() {
+  if (turnTimerInterval) {
+    clearInterval(turnTimerInterval);
+    turnTimerInterval = null;
+  }
+  document.getElementById('turnTimerDisplay').style.display = 'none';
+}
+
 socket.on('pve_started', (data) => {
   matchId = data.matchId;
   myInventory = data.inventory;
@@ -218,6 +260,7 @@ function applySnapshot(snapshot, forceChamberPreview) {
   if (snapshot.finished) {
     document.getElementById('gameBox').style.display = 'none';
     document.getElementById('endBox').style.display = 'block';
+    stopTurnTimerDisplay();
     const won = snapshot.result === 'victory';
     const msgEl = document.getElementById('endMessage');
     msgEl.innerHTML = won
@@ -231,6 +274,9 @@ function applySnapshot(snapshot, forceChamberPreview) {
   }
 
   const isMyTurn = snapshot.currentTurnPlayerId === snapshot.humanId && !snapshot.phaseOver;
+  if (!isMyTurn) {
+    stopTurnTimerDisplay(); // não é mais a vez do humano -- o servidor reinicia quando voltar a ser
+  }
   document.getElementById('turnIndicator').textContent = snapshot.phaseOver
     ? 'Fim de fase...'
     : (isMyTurn ? 'SUA VEZ' : `Vez de: ${aiLabel}`);

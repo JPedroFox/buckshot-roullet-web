@@ -10,7 +10,7 @@ const timers = require('./timers');
 const authRoutes = require('./authRoutes');
 const rankingRoutes = require('./rankingRoutes');
 const { verifyToken } = require('./auth');
-const { saveMatchResult } = require('./matchRepository');
+const { saveMatchResult, hasCompletedPveMatch } = require('./matchRepository');
 const { applyAction, currentPlayerId, ACTION_USE_ITEM, ACTION_SHOOT } = require('../src/core/turn');
 const { applyHumanActionOnly, runAiTurnsIfNeeded, advancePhase, PVE_PHASES } = require('../src/core/pve');
 
@@ -283,7 +283,7 @@ function createServer() {
   }
 
   io.on('connection', (socket) => {
-    socket.on('find_match', () => {
+    socket.on('find_match', async () => {
       // playerId NUNCA vem do payload do cliente -- vem só do token
       // verificado no handshake (io.use acima). É isso que impede o
       // bug de impersonation reportado.
@@ -291,10 +291,24 @@ function createServer() {
 
       // Caso 1: esse usuário já está numa partida em andamento -> reconexão,
       // não matchmaking novo. Resolve o bug de "recarreguei a página e
-      // não voltei pra minha partida".
+      // não voltei pra minha partida". Reconectar sempre é permitido,
+      // mesmo que o tutorial de PvE não tenha sido completado (não faz
+      // sentido travar quem já está no meio de uma partida).
       const active = gameManager.findActiveMatchByPlayerId(playerId);
       if (active) {
         return doRejoin(socket, active.matchId, active.match, playerId);
+      }
+
+      // Bloqueio de tutorial: só libera matchmaking NOVO depois de VENCER
+      // pelo menos 1 partida de PvE (as 3 fases, não basta jogar e
+      // perder). Verificação no SERVIDOR, não só no client -- senão
+      // é só chamar o evento direto pelo console do navegador.
+      const pveDone = await hasCompletedPveMatch(socket.data.userId);
+      if (!pveDone) {
+        return socket.emit(
+          'error_msg',
+          'Vença uma partida de PvE (as 3 fases) primeiro antes de jogar PvP.'
+        );
       }
 
       // Caso 2: o MESMO usuário autenticado já está na fila esperando
@@ -392,8 +406,70 @@ function createServer() {
     // ter dúvida nenhuma no client sobre qual modo cada evento é.
     // -----------------------------------------------------------------
 
+    // Pausa proposital entre "a fase acabou" e "a fase nova está de pé",
+    // pra dar tempo do jogador perceber a virada (vida zerada de quem
+    // perdeu, recarga acontecendo) antes da tela pular pro estado novo.
+    const PHASE_TRANSITION_DELAY_MS = 2500;
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function schedulePveTurnTimer(matchId, entry) {
+      timers.startTurnTimer(entry, () => handlePveTurnTimeout(matchId, entry));
+      io.to(entry.socketId).emit('pve_turn_timer_started', {
+        deadline: timers.getTurnTimerDeadline(entry),
+      });
+    }
+
+    function handlePveTurnTimeout(matchId, entry) {
+      if (entry.match.finished || entry.match.state.gameOver) return;
+      if (currentPlayerId(entry.match.state) !== entry.humanId) return; // segurança, não deveria acontecer
+      handlePveAction(matchId, entry, { type: ACTION_SHOOT, target: 'opponent' }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`erro no timeout de turno PvE ${matchId}:`, err);
+      });
+    }
+
+    /**
+     * Salva o resultado no banco quando a partida de PvE termina (por
+     * vitória/derrota) ou é cancelada (desconexão). `entry.persisted`
+     * evita salvar duas vezes. Nunca mexe em season_wins/season_losses/
+     * total_wins/total_losses de users
+     * -- PvE não conta pro ranking (seção 10).
+     */
+    function pvePersistIfNeeded(matchId, entry, status) {
+      if (entry.persisted) return;
+      entry.persisted = true;
+
+      const { match } = entry;
+      const humanLife = match.state.players[match.humanId].life;
+      const aiLife = match.state.players[match.aiId].life;
+      const phaseReached = match.phaseIndex + 1;
+
+      let humanResult = 'none';
+      let aiResult = 'none';
+      if (status === 'finished') {
+        humanResult = match.result === 'victory' ? 'win' : 'loss';
+        aiResult = match.result === 'victory' ? 'loss' : 'win';
+      }
+
+      saveMatchResult({
+        mode: 'pve',
+        status,
+        phaseReached,
+        players: [
+          { userId: entry.userId, finalLives: humanLife, result: humanResult, isAi: false },
+          { userId: null, finalLives: aiLife, result: aiResult, isAi: true },
+        ],
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`falha ao persistir resultado da partida PvE ${matchId}:`, err);
+      });
+    }
+
     socket.on('pve_start', () => {
       const humanId = socket.data.username; // identidade verificada, não vem do payload
+      const userId = socket.data.userId;
 
       const active = pveManager.findActiveMatchByHumanId(humanId);
       if (active) {
@@ -403,42 +479,43 @@ function createServer() {
           inventory: active.entry.match.state.players[humanId].inventory,
           snapshot: pveStateSnapshot(active.entry),
         });
+        if (currentPlayerId(active.entry.match.state) === humanId) {
+          schedulePveTurnTimer(active.matchId, active.entry);
+        }
         return;
       }
 
-      const matchId = pveManager.createMatch(humanId, socket.id);
+      const matchId = pveManager.createMatch(humanId, userId, socket.id);
       const entry = pveManager.getMatch(matchId);
       socket.emit('pve_started', {
         matchId,
         inventory: entry.match.state.players[humanId].inventory,
         snapshot: pveStateSnapshot(entry),
       });
+      schedulePveTurnTimer(matchId, entry); // humano sempre começa (seção 3)
     });
 
-    // Pausa proposital entre "a fase acabou" e "a fase nova está de pé",
-    // pra dar tempo do jogador perceber a virada (vida zerada de quem
-    // perdeu, recarga acontecendo) antes da tela pular pro estado novo.
-    const PHASE_TRANSITION_DELAY_MS = 2500;
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
     /**
-     * Compartilhado entre pve_use_item e pve_shoot. Emite a ação do
-     * humano IMEDIATAMENTE (feedback instantâneo pro próprio jogador),
-     * e só depois deixa a IA "pensar" e agir -- cada ação dela chega
-     * ao vivo via 'pve_ai_event', com as pausas simuladas em ai.js,
-     * em vez de tudo aparecer de uma vez no final do turno.
+     * Compartilhado entre pve_use_item, pve_shoot e o timeout de turno.
+     * Emite a ação do humano IMEDIATAMENTE (feedback instantâneo pro
+     * próprio jogador), e só depois deixa a IA "pensar" e agir -- cada
+     * ação dela chega ao vivo via 'pve_ai_event', com as pausas
+     * simuladas em ai.js, em vez de tudo aparecer de uma vez no final
+     * do turno.
      *
      * Se a fase terminar (por ação do humano OU da IA), NÃO avança pra
      * fase seguinte na hora -- espera PHASE_TRANSITION_DELAY_MS com o
      * estado "congelado" no fim da fase, só então chama advancePhase()
-     * e manda o snapshot da fase nova (ou do fim de partida).
+     * e manda o snapshot da fase nova (ou do fim de partida). Se a
+     * partida de PvE inteira terminar, persiste o resultado.
      */
-    async function handlePveAction(socket, entry, humanId, action) {
+    async function handlePveAction(matchId, entry, action) {
+      const humanId = entry.humanId;
+      timers.clearTurnTimer(entry); // o jogador agiu a tempo
+
       const { result, phaseIndexBefore } = applyHumanActionOnly(entry.match, action);
 
-      socket.emit('pve_human_event', {
+      io.to(entry.socketId).emit('pve_human_event', {
         humanEvent: result.publicEvent,
         humanPrivateEvent: result.privateEvent,
         inventory: entry.match.state.players[humanId].inventory,
@@ -448,7 +525,7 @@ function createServer() {
       let aiEvents = [];
       if (!entry.match.state.gameOver) {
         aiEvents = await runAiTurnsIfNeeded(entry.match, (aiEvent) => {
-          socket.emit('pve_ai_event', {
+          io.to(entry.socketId).emit('pve_ai_event', {
             event: aiEvent,
             inventory: entry.match.state.players[humanId].inventory,
             snapshot: pveStateSnapshot(entry),
@@ -462,14 +539,25 @@ function createServer() {
         // zerada de quem perdeu), antes de avançar de verdade.
         await sleep(PHASE_TRANSITION_DELAY_MS);
         advancePhase(entry.match);
+        if (entry.match.finished) {
+          pvePersistIfNeeded(matchId, entry, 'finished');
+        }
       }
 
-      socket.emit('pve_update', {
+      io.to(entry.socketId).emit('pve_update', {
         aiEvents,
         phaseChanged: entry.match.phaseIndex !== phaseIndexBefore,
         inventory: entry.match.finished ? [] : entry.match.state.players[humanId].inventory,
         snapshot: pveStateSnapshot(entry),
       });
+
+      const isHumanTurnNow =
+        !entry.match.finished &&
+        !entry.match.state.gameOver &&
+        currentPlayerId(entry.match.state) === humanId;
+      if (isHumanTurnNow) {
+        schedulePveTurnTimer(matchId, entry);
+      }
     }
 
     socket.on('pve_use_item', async ({ matchId, itemType }) => {
@@ -479,7 +567,7 @@ function createServer() {
       if (entry.humanId !== humanId) return socket.emit('error_msg', 'você não pertence a essa partida');
 
       try {
-        await handlePveAction(socket, entry, humanId, { type: ACTION_USE_ITEM, itemType });
+        await handlePveAction(matchId, entry, { type: ACTION_USE_ITEM, itemType });
       } catch (err) {
         socket.emit('error_msg', err.message);
       }
@@ -492,7 +580,7 @@ function createServer() {
       if (entry.humanId !== humanId) return socket.emit('error_msg', 'você não pertence a essa partida');
 
       try {
-        await handlePveAction(socket, entry, humanId, { type: ACTION_SHOOT, target });
+        await handlePveAction(matchId, entry, { type: ACTION_SHOOT, target });
       } catch (err) {
         socket.emit('error_msg', err.message);
       }
@@ -505,22 +593,39 @@ function createServer() {
       }
 
       const found = gameManager.findBySocketId(socket.id);
-      if (!found) return;
-      const { matchId, playerId, match } = found;
-      if (match.state.gameOver) return;
+      if (found) {
+        const { matchId, playerId, match } = found;
+        if (!match.state.gameOver) {
+          match.sockets[playerId] = null;
+          broadcastPublic(matchId, 'opponent_disconnected', { playerId });
 
-      match.sockets[playerId] = null;
-      broadcastPublic(matchId, 'opponent_disconnected', { playerId });
-
-      const isTheirTurn = currentPlayerId(match.state) === playerId;
-      if (isTheirTurn) {
-        // caiu no PRÓPRIO turno: pausa timer de turno, inicia reconexão
-        timers.pauseTurnTimer(match);
-        scheduleReconnectTimer(matchId, match, playerId);
+          const isTheirTurn = currentPlayerId(match.state) === playerId;
+          if (isTheirTurn) {
+            // caiu no PRÓPRIO turno: pausa timer de turno, inicia reconexão
+            timers.pauseTurnTimer(match);
+            scheduleReconnectTimer(matchId, match, playerId);
+          }
+          // caiu no turno do oponente: não faz nada agora (seção 9) —
+          // o timer de reconexão só começa quando chegar a vez dele,
+          // isso é tratado em afterAction().
+        }
+        return;
       }
-      // caiu no turno do oponente: não faz nada agora (seção 9) —
-      // o timer de reconexão só começa quando chegar a vez dele,
-      // isso é tratado em afterAction().
+
+      // PvE: cair (ou sair, já que navegar pra outra página também
+      // derruba o socket) cancela a fase NA HORA, sem espera de
+      // reconexão -- diferente de PvP. Seção 9 original previa isso
+      // pro timeout de reconexão de PvE; aqui simplificamos pra não
+      // ter timeout nenhum: sair já cancela direto.
+      const foundPve = pveManager.findBySocketId(socket.id);
+      if (foundPve) {
+        const { matchId, entry } = foundPve;
+        if (!entry.match.finished) {
+          timers.clearTurnTimer(entry);
+          entry.match.finished = true; // trava a partida, ninguém mais pode agir nela
+          pvePersistIfNeeded(matchId, entry, 'cancelled');
+        }
+      }
     });
   });
 

@@ -23,9 +23,11 @@
 
 <script src="/shared.js"></script>
 <script>
-if (requireAuth()) {
+(async () => {
+  if (!requireAuth()) return;
+  if (!(await requirePveCompleted())) return;
   loadLeaderboard();
-}
+})();
 
 async function loadLeaderboard() {
   const el = document.getElementById('leaderboardContent');
